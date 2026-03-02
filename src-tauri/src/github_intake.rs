@@ -40,6 +40,56 @@ impl GithubIssueIntakeOutcome {
 }
 
 pub fn evaluate_issue_intake_policy(_issue: &GithubIssueIntakePolicyInput) -> GithubIssueIntakeOutcome {
+    if _issue.is_pull_request {
+        return GithubIssueIntakeOutcome::rejected(
+            "is_pull_request",
+            "Move an issue card instead of a pull request.",
+        );
+    }
+
+    if !_issue.state.eq_ignore_ascii_case("open") {
+        return GithubIssueIntakeOutcome::rejected(
+            "issue_closed",
+            "Reopen the issue before moving it to In Progress.",
+        );
+    }
+
+    let has_body = _issue
+        .body
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !has_body {
+        return GithubIssueIntakeOutcome::rejected(
+            "missing_body",
+            "Add implementation details to the issue body before intake.",
+        );
+    }
+
+    let has_intake_label = _issue
+        .labels
+        .iter()
+        .any(|label| label.trim().to_ascii_lowercase().starts_with(INTAKE_LABEL_PREFIX));
+    if !has_intake_label {
+        return GithubIssueIntakeOutcome::rejected(
+            "missing_intake_label",
+            "Add an intake:* label to mark the issue as intake-eligible.",
+        );
+    }
+
+    let has_deny_signal = _issue.labels.iter().any(|label| {
+        let normalized = label.trim().to_ascii_lowercase();
+        DENY_SIGNAL_LABELS
+            .iter()
+            .any(|deny_label| normalized == *deny_label)
+    });
+    if has_deny_signal {
+        return GithubIssueIntakeOutcome::rejected(
+            "deny_signal_present",
+            "Split the issue into smaller tasks and remove epic/large markers.",
+        );
+    }
+
     GithubIssueIntakeOutcome::accepted()
 }
 
