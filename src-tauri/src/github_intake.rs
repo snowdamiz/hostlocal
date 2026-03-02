@@ -183,4 +183,45 @@ mod tests {
             assert_eq!(actual, case.expected, "case failed: {}", case.name);
         }
     }
+
+    #[test]
+    fn command_helpers_normalize_agent_label_prefix() {
+        assert_eq!(
+            normalize_agent_label("hostlocal").expect("agent label"),
+            "agent:hostlocal"
+        );
+        assert_eq!(
+            normalize_agent_label("agent:runner").expect("agent label"),
+            "agent:runner"
+        );
+    }
+
+    #[test]
+    fn command_helpers_reject_empty_agent_label() {
+        assert!(normalize_agent_label("   ").is_none());
+    }
+
+    #[test]
+    fn command_helpers_detect_required_labels() {
+        let labels = vec!["intake:small".to_string(), "agent:hostlocal".to_string()];
+        assert!(labels_satisfy_intake_acceptance(&labels, "agent:hostlocal"));
+        assert!(!labels_satisfy_intake_acceptance(&labels, "agent:other"));
+    }
+
+    #[test]
+    fn command_helpers_map_rate_limit_failure() {
+        let response = GithubApiResponse {
+            status: 429,
+            body: Some("too many requests".to_string()),
+            retry_after_seconds: Some(30),
+            rate_limit_reset_epoch_seconds: None,
+        };
+
+        let outcome = map_label_persist_failure(&response);
+        assert_eq!(outcome.reason_code.as_deref(), Some("label_persist_rate_limited"));
+        assert_eq!(
+            outcome.fix_hint.as_deref(),
+            Some("GitHub rate limit reached. Retry this intake in about 30 seconds.")
+        );
+    }
 }
