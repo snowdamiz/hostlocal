@@ -30,6 +30,18 @@ export interface GithubRepositoryItem {
   updatedAt: string;
 }
 
+export interface GithubIssueIntakeRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  agentLabel: string;
+}
+
+export interface GithubIssueIntakeOutcome {
+  accepted: boolean;
+  reasonCode: string | null;
+  fixHint: string | null;
+}
+
 export interface GithubAuthStatus {
   connected: boolean;
   user: GithubUser | null;
@@ -107,6 +119,12 @@ export function githubListRepositories(): Promise<GithubRepository[]> {
 
 export function githubListRepositoryItems(repositoryFullName: string): Promise<GithubRepositoryItem[]> {
   return invoke<GithubRepositoryItem[]>("github_list_repository_items", { repositoryFullName });
+}
+
+export function githubAttemptIssueIntake(
+  request: GithubIssueIntakeRequest,
+): Promise<GithubIssueIntakeOutcome> {
+  return invoke<GithubIssueIntakeOutcome>("github_attempt_issue_intake", { request });
 }
 
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {
