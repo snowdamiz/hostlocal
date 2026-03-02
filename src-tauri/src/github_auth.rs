@@ -164,7 +164,7 @@ fn now_epoch_seconds() -> i64 {
         .as_secs() as i64
 }
 
-fn github_http_client() -> Result<reqwest::Client, String> {
+pub(crate) fn github_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .build()
@@ -188,7 +188,7 @@ fn keyring_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|e| e.to_string())
 }
 
-fn read_persisted_token() -> Result<Option<String>, String> {
+pub(crate) fn read_persisted_token() -> Result<Option<String>, String> {
     let entry = keyring_entry()?;
     match entry.get_password() {
         Ok(token) => Ok(Some(token)),
@@ -200,6 +200,26 @@ fn read_persisted_token() -> Result<Option<String>, String> {
 fn persist_token(token: &str) -> Result<(), String> {
     let entry = keyring_entry()?;
     entry.set_password(token).map_err(|e| e.to_string())
+}
+
+pub(crate) fn current_session_access_token(state: &GithubAuthState) -> Result<Option<String>, String> {
+    let session = state
+        .session
+        .lock()
+        .map_err(|_| "Failed to access auth state".to_string())?;
+    Ok(session.access_token.clone())
+}
+
+pub(crate) fn remember_access_token(
+    state: &GithubAuthState,
+    access_token: String,
+) -> Result<(), String> {
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| "Failed to access auth state".to_string())?;
+    session.access_token = Some(access_token);
+    Ok(())
 }
 
 fn clear_persisted_token() -> Result<(), String> {
