@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod github_auth;
+mod github_intake;
 mod window;
 
 use db::{app_db_path, with_connection, DbPath};
