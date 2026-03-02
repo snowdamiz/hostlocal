@@ -12,6 +12,7 @@ import xmlLanguage from "highlight.js/lib/languages/xml";
 import yamlLanguage from "highlight.js/lib/languages/yaml";
 import { siGithub } from "simple-icons";
 import {
+  githubAttemptIssueIntake,
   githubAuthLogout,
   githubAuthPoll,
   githubAuthStart,
@@ -20,11 +21,14 @@ import {
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubOpenVerificationUrl,
+  type GithubIssueIntakeOutcome,
   type GithubDeviceAuthStart,
   type GithubRepository,
   type GithubRepositoryItem,
   type GithubUser,
 } from "../lib/commands";
+import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../intake/intake-state";
+import { pushIntakeRejectionToast } from "../intake/toast-store";
 
 type KanbanColumnKey = "todo" | "inProgress" | "inReview" | "done";
 const CANVAS_DEFAULT_PAN_X = 0;
@@ -62,6 +66,7 @@ const KANBAN_COLUMNS: ReadonlyArray<{ key: KanbanColumnKey; title: string; descr
 ];
 
 const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
+const DEFAULT_AGENT_LABEL = "hostlocal";
 
 let hasRegisteredHighlightLanguages = false;
 
@@ -323,12 +328,12 @@ export function MainLayout() {
   const [repositoryItems, setRepositoryItems] = createSignal<GithubRepositoryItem[]>([]);
   const [repositoryItemsError, setRepositoryItemsError] = createSignal<string | null>(null);
   const [isRepositoryItemsLoading, setIsRepositoryItemsLoading] = createSignal(false);
-  const [manualColumnByItemId, setManualColumnByItemId] = createSignal<Record<number, KanbanColumnKey>>({});
   const [visibleCardCountByColumn, setVisibleCardCountByColumn] = createSignal<Record<KanbanColumnKey, number>>(
     createDefaultVisibleCardCountByColumn(),
   );
   const [draggingItemId, setDraggingItemId] = createSignal<number | null>(null);
   const [dragOverColumn, setDragOverColumn] = createSignal<KanbanColumnKey | null>(null);
+  const [isCardDragging, setIsCardDragging] = createSignal(false);
   const [canvasView, setCanvasView] = createSignal({
     panX: CANVAS_DEFAULT_PAN_X,
     panY: CANVAS_DEFAULT_PAN_Y,
@@ -346,6 +351,7 @@ export function MainLayout() {
   let lastPointerY = 0;
   let canvasViewportRef: HTMLDivElement | undefined;
   let canvasGridRef: HTMLCanvasElement | undefined;
+  const intakeAttemptState = createIntakeAttemptState();
 
   const formatInvokeError = (error: unknown, fallback: string) => {
     if (error instanceof Error && error.message) {
@@ -632,10 +638,12 @@ export function MainLayout() {
     setRepositoryItems([]);
     setRepositoryItemsError(null);
     setIsRepositoryItemsLoading(false);
-    setManualColumnByItemId({});
+    clearIntakeAttempts(intakeAttemptState);
     setVisibleCardCountByColumn(createDefaultVisibleCardCountByColumn());
     setDraggingItemId(null);
     setDragOverColumn(null);
+    setIsCardDragging(false);
+    document.documentElement.classList.remove("is-card-dragging");
     setSelectedBoardItemId(null);
   };
 
@@ -664,9 +672,8 @@ export function MainLayout() {
       done: [],
     };
 
-    const manuallyAssignedColumns = manualColumnByItemId();
     for (const item of repositoryItems()) {
-      const column = manuallyAssignedColumns[item.id] ?? inferDefaultColumn(item);
+      const column = inferDefaultColumn(item);
       grouped[column].push(item);
     }
 
@@ -677,7 +684,7 @@ export function MainLayout() {
     const requestId = ++repositoryItemsRequestId;
     setIsRepositoryItemsLoading(true);
     setRepositoryItemsError(null);
-    setManualColumnByItemId({});
+    clearIntakeAttempts(intakeAttemptState);
     setVisibleCardCountByColumn(createDefaultVisibleCardCountByColumn());
 
     try {
@@ -897,9 +904,15 @@ export function MainLayout() {
     return parsedItemId;
   };
 
+  const setCardDragInteraction = (active: boolean) => {
+    setIsCardDragging(active);
+    document.documentElement.classList.toggle("is-card-dragging", active);
+  };
+
   const handleCardDragStart = (event: DragEvent, itemId: number) => {
     setSelectedBoardItemId(itemId);
     setDraggingItemId(itemId);
+    setCardDragInteraction(true);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", String(itemId));
@@ -909,6 +922,7 @@ export function MainLayout() {
   const handleCardDragEnd = () => {
     setDraggingItemId(null);
     setDragOverColumn(null);
+    setCardDragInteraction(false);
   };
 
   const closeIssuePanel = () => {
@@ -946,27 +960,78 @@ export function MainLayout() {
     }
   };
 
-  const handleColumnDrop = (event: DragEvent, columnKey: KanbanColumnKey) => {
+  const resolveCurrentItemColumn = (itemId: number): KanbanColumnKey | null => {
+    const item = repositoryItems().find((candidate) => candidate.id === itemId);
+    if (!item) {
+      return null;
+    }
+
+    return inferDefaultColumn(item);
+  };
+
+  const startAgentRunForIssue = async (item: GithubRepositoryItem) => {
+    // Phase 2 boundary for Phase 3 integration: accepted intake starts the run boundary.
+    console.info(`[intake] start run boundary for issue #${item.number}`);
+  };
+
+  const emitIntakeRejection = (outcome: GithubIssueIntakeOutcome) => {
+    pushIntakeRejectionToast(outcome.reasonCode, outcome.fixHint);
+  };
+
+  const handleColumnDrop = async (event: DragEvent, columnKey: KanbanColumnKey) => {
     event.preventDefault();
 
     const itemId = resolveDraggedItemId(event);
     if (itemId === null) {
+      handleCardDragEnd();
       return;
     }
 
-    setManualColumnByItemId((currentColumns) => {
-      if (currentColumns[itemId] === columnKey) {
-        return currentColumns;
+    const sourceColumn = resolveCurrentItemColumn(itemId);
+    if (sourceColumn !== "todo" || columnKey !== "inProgress") {
+      handleCardDragEnd();
+      return;
+    }
+
+    const repository = selectedRepository();
+    const item = repositoryItems().find((candidate) => candidate.id === itemId);
+    if (!repository || !item) {
+      handleCardDragEnd();
+      return;
+    }
+
+    if (!beginIntakeAttempt(intakeAttemptState, itemId)) {
+      pushIntakeRejectionToast(
+        "duplicate_intake_pending",
+        "An intake attempt is already pending for this issue. Wait for it to finish before retrying.",
+      );
+      handleCardDragEnd();
+      return;
+    }
+
+    try {
+      const outcome = await githubAttemptIssueIntake({
+        repositoryFullName: repository.fullName,
+        issueNumber: item.number,
+        agentLabel: DEFAULT_AGENT_LABEL,
+      });
+
+      if (!outcome.accepted) {
+        emitIntakeRejection(outcome);
+        return;
       }
 
-      return {
-        ...currentColumns,
-        [itemId]: columnKey,
-      };
-    });
-
-    setDraggingItemId(null);
-    setDragOverColumn(null);
+      await startAgentRunForIssue(item);
+      await loadRepositoryItems(repository.fullName);
+    } catch (error) {
+      pushIntakeRejectionToast(
+        "label_persist_failed",
+        formatInvokeError(error, "Intake request failed before completion. Retry when GitHub is reachable."),
+      );
+    } finally {
+      resolveIntakeAttempt(intakeAttemptState, itemId);
+      handleCardDragEnd();
+    }
   };
 
   const loadMoreColumnCards = (columnKey: KanbanColumnKey) => {
@@ -1007,6 +1072,8 @@ export function MainLayout() {
   onCleanup(() => {
     clearPollTimer();
     stopCanvasResetAnimation();
+    clearIntakeAttempts(intakeAttemptState);
+    document.documentElement.classList.remove("is-card-dragging");
     if (canvasResizeObserver) {
       canvasResizeObserver.disconnect();
       canvasResizeObserver = null;
@@ -1168,7 +1235,7 @@ export function MainLayout() {
           ref={(element) => {
             canvasViewportRef = element;
           }}
-          class={`content-canvas-viewport${isCanvasPanning() ? " is-panning" : ""}`}
+          class={`content-canvas-viewport${isCanvasPanning() ? " is-panning" : ""}${isCardDragging() ? " is-card-dragging" : ""}`}
           onPointerDown={beginCanvasPan}
           onPointerMove={moveCanvasPan}
           onPointerUp={endCanvasPan}
@@ -1212,7 +1279,9 @@ export function MainLayout() {
                               aria-label={`${column.title} column`}
                               onDragOver={(event) => handleColumnDragOver(event, column.key)}
                               onDragLeave={(event) => handleColumnDragLeave(event, column.key)}
-                              onDrop={(event) => handleColumnDrop(event, column.key)}
+                              onDrop={(event) => {
+                                void handleColumnDrop(event, column.key);
+                              }}
                             >
                               <header class="kanban-column-header">
                                 <div>
@@ -1227,21 +1296,38 @@ export function MainLayout() {
                                     {(item) => (
                                       <article
                                         class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}${selectedBoardItemId() === item.id ? " is-selected" : ""}`}
-                                        draggable
                                         onPointerDown={(event) => {
                                           if (event.button === 0) {
                                             setSelectedBoardItemId(item.id);
                                           }
                                         }}
                                         onClick={() => setSelectedBoardItemId(item.id)}
-                                        onDragStart={(event) => handleCardDragStart(event, item.id)}
-                                        onDragEnd={handleCardDragEnd}
                                       >
                                         <div class="kanban-card-top">
-                                          <span class={`kanban-card-kind${item.isPullRequest ? " is-pr" : " is-issue"}`}>
-                                            {item.isPullRequest ? "Pull request" : "Issue"}
-                                          </span>
-                                          <span class="kanban-card-number">#{item.number}</span>
+                                          <div class="kanban-card-top-meta">
+                                            <span class={`kanban-card-kind${item.isPullRequest ? " is-pr" : " is-issue"}`}>
+                                              {item.isPullRequest ? "Pull request" : "Issue"}
+                                            </span>
+                                            <span class="kanban-card-number">#{item.number}</span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            class="kanban-card-drag-handle"
+                                            draggable
+                                            title={`Drag issue #${item.number}`}
+                                            aria-label={`Drag issue #${item.number}`}
+                                            onPointerDown={(event) => event.stopPropagation()}
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                            }}
+                                            onDragStart={(event) => handleCardDragStart(event, item.id)}
+                                            onDragEnd={handleCardDragEnd}
+                                          >
+                                            <span class="kanban-card-drag-handle-dot" />
+                                            <span class="kanban-card-drag-handle-dot" />
+                                            <span class="kanban-card-drag-handle-dot" />
+                                          </button>
                                         </div>
 
                                         <p class="kanban-card-title">

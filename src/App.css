@@ -41,6 +41,11 @@ html {
   --intake-toast-dismiss-border: var(--surface-border);
   --intake-toast-dismiss-text: var(--text-secondary);
   --intake-toast-shadow: var(--sidebar-shadow-dark);
+  --intake-drag-handle-bg: var(--surface);
+  --intake-drag-handle-border: var(--surface-border);
+  --intake-drag-handle-bg-hover: var(--surface-dark);
+  --intake-drag-handle-border-hover: var(--surface-light);
+  --intake-drag-handle-dot: var(--text-muted);
 }
 
 
@@ -1177,6 +1182,17 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   user-select: none;
 }
 
+.content-canvas-viewport.is-card-dragging {
+  user-select: none;
+}
+
+html.is-card-dragging,
+html.is-card-dragging body,
+html.is-card-dragging * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .content-canvas-grid {
   position: absolute;
   inset: 0;
@@ -1337,7 +1353,7 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  cursor: grab;
+  cursor: default;
   transition:
     transform 150ms ease,
     box-shadow 170ms ease,
@@ -1350,10 +1366,6 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   border-color: var(--surface-light);
   background: var(--surface-dark);
   box-shadow: 0 6px 16px var(--app-grid-line);
-}
-
-.kanban-card:active {
-  cursor: grabbing;
 }
 
 .kanban-card.is-dragging {
@@ -1373,6 +1385,12 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   gap: 8px;
 }
 
+.kanban-card-top-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .kanban-card-kind {
   border: 1px solid var(--surface-border);
   border-radius: 999px;
@@ -1389,6 +1407,43 @@ html[data-platform="non-macos"] .window-control-maximize::before {
 
 .kanban-card-kind.is-issue {
   color: var(--text-secondary);
+}
+
+.kanban-card-drag-handle {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--intake-drag-handle-border);
+  border-radius: 999px;
+  background: var(--intake-drag-handle-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 30px;
+  height: 22px;
+  cursor: grab;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.kanban-card-drag-handle:hover {
+  border-color: var(--intake-drag-handle-border-hover);
+  background: var(--intake-drag-handle-bg-hover);
+}
+
+.kanban-card-drag-handle:active {
+  cursor: grabbing;
+}
+
+.kanban-card-drag-handle:focus-visible {
+  outline: 2px solid var(--surface-light);
+  outline-offset: 2px;
+}
+
+.kanban-card-drag-handle-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--intake-drag-handle-dot);
 }
 
 .kanban-card-number {
