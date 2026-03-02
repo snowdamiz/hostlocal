@@ -1,3 +1,4 @@
+import "./App.css";
 import { Match, Switch, createSignal, onMount } from "solid-js";
 import { MainLayout } from "./components/MainLayout";
 import { SetupWizard } from "./components/SetupWizard";
