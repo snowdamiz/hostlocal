@@ -5,14 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-03-02)
 
 **Core value:** A user can move a GitHub issue to in-progress and reliably get a review-ready PR from a fast local agent run, with clear visibility and control throughout execution.
-**Current focus:** Phase 1: Tailwind v4 Styling Foundation
+**Current focus:** Phase 2: Policy-Gated Issue Intake
 
 ## Current Position
 
-Phase: 1 of 9 (Tailwind v4 Styling Foundation)
+Phase: 2 of 9 (Policy-Gated Issue Intake)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-03-02 — Captured implementation context for Phase 1 (Tailwind v4 styling foundation).
+Last activity: 2026-03-02 — Captured implementation context for Phase 2 (Policy-Gated Issue Intake).
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -57,6 +57,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-02 16:01
-Stopped at: Phase 1 context gathered.
-Resume file: .planning/phases/01-tailwind-v4-styling-foundation/01-CONTEXT.md
+Last session: 2026-03-02 17:49
+Stopped at: Phase 2 context gathered.
+Resume file: .planning/phases/02-policy-gated-issue-intake/02-CONTEXT.md
