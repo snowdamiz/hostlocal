@@ -1,0 +1,58 @@
+mod commands;
+mod db;
+mod github_auth;
+mod window;
+
+use db::{app_db_path, with_connection, DbPath};
+use github_auth::GithubAuthState;
+use tauri::{Manager, WindowEvent};
+use window::{app_window_state_path, persist_window_state, restore_window_state};
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .setup(|app| {
+            let db_path = app_db_path(app.handle())?;
+            with_connection(&db_path, |_| Ok(())).map_err(std::io::Error::other)?;
+            app.manage(DbPath(db_path));
+            app.manage(GithubAuthState::default());
+
+            let window_state_path = app_window_state_path(app.handle())?;
+            if let Some(main_window) = app.get_webview_window("main") {
+                restore_window_state(&main_window, &window_state_path)
+                    .map_err(std::io::Error::other)?;
+
+                let state_path_for_events = window_state_path.clone();
+                let main_window_for_events = main_window.clone();
+                main_window.on_window_event(move |event| match event {
+                    WindowEvent::Moved(_)
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::CloseRequested { .. } => {
+                        let _ =
+                            persist_window_state(&main_window_for_events, &state_path_for_events);
+                    }
+                    _ => {}
+                });
+            }
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::sqlite_healthcheck,
+            commands::sqlite_db_path,
+            commands::sqlite_insert_message,
+            commands::sqlite_list_messages,
+            commands::sqlite_list_projects,
+            commands::sqlite_get_development_folder,
+            commands::sqlite_set_development_folder,
+            commands::sqlite_create_project,
+            commands::pick_development_folder,
+            github_auth::github_auth_status,
+            github_auth::github_auth_start,
+            github_auth::github_auth_poll,
+            github_auth::github_auth_logout,
+            github_auth::github_open_verification_url,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
