@@ -13,8 +13,8 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Issue Intake
 
-- [ ] **INTK-01**: User can move an issue from Todo to In Progress to start an agent run when policy checks pass.
-- [ ] **INTK-02**: User receives a clear rejection reason when an issue is outside the small-task policy boundary.
+- [x] **INTK-01**: User can move an issue from Todo to In Progress to start an agent run when policy checks pass.
+- [x] **INTK-02**: User receives a clear rejection reason when an issue is outside the small-task policy boundary.
 
 ### Local Runtime
 
@@ -87,8 +87,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | STYLE-01 | Phase 1 | Pending |
-| INTK-01 | Phase 2 | Pending |
-| INTK-02 | Phase 2 | Pending |
+| INTK-01 | Phase 2 | Complete |
+| INTK-02 | Phase 2 | Complete |
 | RUN-01 | Phase 3 | Pending |
 | RUN-02 | Phase 3 | Pending |
 | RUN-03 | Phase 3 | Pending |
