@@ -12,7 +12,7 @@ This roadmap delivers the local issue-to-PR loop in requirement-driven phases: T
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Tailwind v4 Styling Foundation** - Convert global CSS-file styling to Tailwind v4 utilities and design tokens.
+- [x] **Phase 1: Tailwind v4 Styling Foundation** - Convert global CSS-file styling to Tailwind v4 utilities and design tokens.
 - [ ] **Phase 2: Policy-Gated Issue Intake** - Start runs from board movement only for in-scope issues.
 - [ ] **Phase 3: Local Worker Runtime Boundary** - Run each task locally in isolated ephemeral workspace with command/path guardrails.
 - [ ] **Phase 4: Deterministic Run State Engine** - Make run stages explicit and crash-recoverable.
@@ -34,9 +34,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Core existing workflows remain visually usable after migration (repo selection, board view, sidebar telemetry surfaces).
 **Plans**: 3 plans
 Plans:
-- [ ] 01-01-PLAN.md — Establish Tailwind v4 build pipeline and semantic token foundation.
-- [ ] 01-02-PLAN.md — Migrate app shell, setup flow, and window controls to utility-first styling.
-- [ ] 01-03-PLAN.md — Migrate main board/sidebar/workflow surfaces in `MainLayout` to Tailwind utilities.
+- [x] 01-01-PLAN.md — Establish Tailwind v4 build pipeline and semantic token foundation.
+- [x] 01-02-PLAN.md — Migrate app shell, setup flow, and window controls to utility-first styling.
+- [x] 01-03-PLAN.md — Migrate main board/sidebar/workflow surfaces in `MainLayout` to Tailwind utilities.
 
 ### Phase 2: Policy-Gated Issue Intake
 **Goal**: Users can start an agent run by moving an issue to In Progress only when it passes small-task policy checks.
@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tailwind v4 Styling Foundation | 1/3 | In Progress|  |
+| 1. Tailwind v4 Styling Foundation | 3/3 | Complete | 2026-03-02 |
 | 2. Policy-Gated Issue Intake | 0/TBD | Not started | - |
 | 3. Local Worker Runtime Boundary | 0/TBD | Not started | - |
 | 4. Deterministic Run State Engine | 0/TBD | Not started | - |
