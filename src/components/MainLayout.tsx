@@ -1,4 +1,16 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import hljs from "highlight.js/lib/core";
+import bashLanguage from "highlight.js/lib/languages/bash";
+import javascriptLanguage from "highlight.js/lib/languages/javascript";
+import jsonLanguage from "highlight.js/lib/languages/json";
+import markdownLanguage from "highlight.js/lib/languages/markdown";
+import plaintextLanguage from "highlight.js/lib/languages/plaintext";
+import rustLanguage from "highlight.js/lib/languages/rust";
+import shellLanguage from "highlight.js/lib/languages/shell";
+import typescriptLanguage from "highlight.js/lib/languages/typescript";
+import xmlLanguage from "highlight.js/lib/languages/xml";
+import yamlLanguage from "highlight.js/lib/languages/yaml";
+import { siGithub } from "simple-icons";
 import {
   githubAuthLogout,
   githubAuthPoll,
@@ -6,6 +18,7 @@ import {
   githubAuthStatus,
   githubListRepositories,
   githubListRepositoryItems,
+  githubOpenItemUrl,
   githubOpenVerificationUrl,
   type GithubDeviceAuthStart,
   type GithubRepository,
@@ -49,6 +62,29 @@ const KANBAN_COLUMNS: ReadonlyArray<{ key: KanbanColumnKey; title: string; descr
 ];
 
 const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
+
+let hasRegisteredHighlightLanguages = false;
+
+const ensureHighlightLanguagesRegistered = () => {
+  if (hasRegisteredHighlightLanguages) {
+    return;
+  }
+
+  hljs.registerLanguage("plaintext", plaintextLanguage);
+  hljs.registerLanguage("bash", bashLanguage);
+  hljs.registerLanguage("shell", shellLanguage);
+  hljs.registerLanguage("javascript", javascriptLanguage);
+  hljs.registerLanguage("typescript", typescriptLanguage);
+  hljs.registerLanguage("json", jsonLanguage);
+  hljs.registerLanguage("yaml", yamlLanguage);
+  hljs.registerLanguage("rust", rustLanguage);
+  hljs.registerLanguage("markdown", markdownLanguage);
+  hljs.registerLanguage("xml", xmlLanguage);
+
+  hasRegisteredHighlightLanguages = true;
+};
+
+ensureHighlightLanguagesRegistered();
 
 const parseTimestamp = (isoDate: string) => {
   const timestamp = Date.parse(isoDate);
@@ -94,6 +130,176 @@ const formatIssueCountLabel = (assigneeCount: number) => {
   return `${assigneeCount} assignees`;
 };
 
+type IssueBodyBlock =
+  | {
+      kind: "paragraph";
+      text: string;
+    }
+  | {
+      kind: "code";
+      language: string | null;
+      code: string;
+    };
+
+type IssueBodyInlineToken =
+  | {
+      kind: "text";
+      value: string;
+    }
+  | {
+      kind: "inlineCode";
+      value: string;
+    };
+
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const parseIssueBody = (input: string): IssueBodyBlock[] => {
+  const normalizedInput = input.replaceAll(/\r\n?/g, "\n");
+  const blocks: IssueBodyBlock[] = [];
+  const paragraphLines: string[] = [];
+  let codeLines: string[] = [];
+  let isInCodeBlock = false;
+  let activeCodeLanguage: string | null = null;
+
+  const flushParagraph = () => {
+    const paragraphText = paragraphLines.join("\n").trim();
+    paragraphLines.length = 0;
+    if (paragraphText.length > 0) {
+      blocks.push({
+        kind: "paragraph",
+        text: paragraphText,
+      });
+    }
+  };
+
+  const flushCodeBlock = () => {
+    blocks.push({
+      kind: "code",
+      language: activeCodeLanguage,
+      code: codeLines.join("\n"),
+    });
+    codeLines = [];
+    activeCodeLanguage = null;
+  };
+
+  for (const line of normalizedInput.split("\n")) {
+    const fenceMatch = line.match(/^```([\w#+.-]*)\s*$/);
+    if (fenceMatch) {
+      if (isInCodeBlock) {
+        flushCodeBlock();
+        isInCodeBlock = false;
+      } else {
+        flushParagraph();
+        isInCodeBlock = true;
+        activeCodeLanguage = fenceMatch[1] ? fenceMatch[1] : null;
+      }
+      continue;
+    }
+
+    if (isInCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (line.trim().length === 0) {
+      flushParagraph();
+      continue;
+    }
+
+    paragraphLines.push(line);
+  }
+
+  if (isInCodeBlock) {
+    flushCodeBlock();
+  } else {
+    flushParagraph();
+  }
+
+  return blocks;
+};
+
+const parseIssueInlineTokens = (text: string): IssueBodyInlineToken[] => {
+  const tokens: IssueBodyInlineToken[] = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const inlineCodeStart = text.indexOf("`", cursor);
+    if (inlineCodeStart < 0) {
+      tokens.push({
+        kind: "text",
+        value: text.slice(cursor),
+      });
+      break;
+    }
+
+    const inlineCodeEnd = text.indexOf("`", inlineCodeStart + 1);
+    if (inlineCodeEnd < 0) {
+      tokens.push({
+        kind: "text",
+        value: text.slice(cursor),
+      });
+      break;
+    }
+
+    if (inlineCodeStart > cursor) {
+      tokens.push({
+        kind: "text",
+        value: text.slice(cursor, inlineCodeStart),
+      });
+    }
+
+    const inlineCodeValue = text.slice(inlineCodeStart + 1, inlineCodeEnd);
+    if (inlineCodeValue.length === 0) {
+      tokens.push({
+        kind: "text",
+        value: "``",
+      });
+    } else {
+      tokens.push({
+        kind: "inlineCode",
+        value: inlineCodeValue,
+      });
+    }
+
+    cursor = inlineCodeEnd + 1;
+  }
+
+  return tokens.length > 0
+    ? tokens
+    : [
+        {
+          kind: "text",
+          value: text,
+        },
+      ];
+};
+
+const highlightIssueCode = (code: string, language: string | null) => {
+  const normalizedLanguage = language?.trim().toLowerCase() ?? "";
+  if (normalizedLanguage.length > 0 && hljs.getLanguage(normalizedLanguage)) {
+    try {
+      return hljs.highlight(code, {
+        language: normalizedLanguage,
+        ignoreIllegals: true,
+      }).value;
+    } catch {
+      // Ignore and continue with fallback highlighting.
+    }
+  }
+
+  try {
+    return hljs.highlightAuto(code).value;
+  } catch {
+    return escapeHtml(code);
+  }
+};
+
 const createDefaultVisibleCardCountByColumn = (): Record<KanbanColumnKey, number> => ({
   todo: KANBAN_COLUMN_PAGE_SIZE,
   inProgress: KANBAN_COLUMN_PAGE_SIZE,
@@ -130,6 +336,7 @@ export function MainLayout() {
   });
   const [isCanvasPanning, setIsCanvasPanning] = createSignal(false);
   const [isChatOpen, setIsChatOpen] = createSignal(false);
+  const [selectedBoardItemId, setSelectedBoardItemId] = createSignal<number | null>(null);
 
   let pollTimeoutId: number | null = null;
   let repositoryItemsRequestId = 0;
@@ -181,6 +388,15 @@ export function MainLayout() {
     return {
       transform: `translate3d(${BOARD_ORIGIN_X + view.panX}px, ${BOARD_ORIGIN_Y + view.panY}px, 0) scale(${view.zoom})`,
     };
+  });
+
+  const selectedBoardItem = createMemo(() => {
+    const itemId = selectedBoardItemId();
+    if (itemId === null) {
+      return null;
+    }
+
+    return repositoryItems().find((item) => item.id === itemId) ?? null;
   });
 
   const shouldPanCanvasFromTarget = (target: EventTarget | null, pointerButton: number) => {
@@ -421,6 +637,7 @@ export function MainLayout() {
     setVisibleCardCountByColumn(createDefaultVisibleCardCountByColumn());
     setDraggingItemId(null);
     setDragOverColumn(null);
+    setSelectedBoardItemId(null);
   };
 
   const clearRepositoryState = () => {
@@ -653,6 +870,15 @@ export function MainLayout() {
     }
   };
 
+  const openGithubItemPage = async (url: string) => {
+    try {
+      await githubOpenItemUrl(url);
+    } catch {
+      // Browser fallback when native opener fails in the runtime.
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   const resolveDraggedItemId = (event: DragEvent) => {
     const activeDraggingItemId = draggingItemId();
     if (activeDraggingItemId !== null) {
@@ -673,6 +899,7 @@ export function MainLayout() {
   };
 
   const handleCardDragStart = (event: DragEvent, itemId: number) => {
+    setSelectedBoardItemId(itemId);
     setDraggingItemId(itemId);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
@@ -683,6 +910,10 @@ export function MainLayout() {
   const handleCardDragEnd = () => {
     setDraggingItemId(null);
     setDragOverColumn(null);
+  };
+
+  const closeIssuePanel = () => {
+    setSelectedBoardItemId(null);
   };
 
   const handleColumnDragOver = (event: DragEvent, columnKey: KanbanColumnKey) => {
@@ -784,7 +1015,7 @@ export function MainLayout() {
   });
 
   return (
-    <div class="layout">
+    <div class={`layout${selectedBoardItem() ? " is-issue-panel-open" : ""}`}>
       <aside class="sidebar-left">
         <div class="sidebar-repositories-panel">
           <div class="sidebar-repositories">
@@ -996,8 +1227,14 @@ export function MainLayout() {
                                   <For each={visibleColumnItems()}>
                                     {(item) => (
                                       <article
-                                        class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}`}
+                                        class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}${selectedBoardItemId() === item.id ? " is-selected" : ""}`}
                                         draggable
+                                        onPointerDown={(event) => {
+                                          if (event.button === 0) {
+                                            setSelectedBoardItemId(item.id);
+                                          }
+                                        }}
+                                        onClick={() => setSelectedBoardItemId(item.id)}
                                         onDragStart={(event) => handleCardDragStart(event, item.id)}
                                         onDragEnd={handleCardDragEnd}
                                       >
@@ -1008,9 +1245,9 @@ export function MainLayout() {
                                           <span class="kanban-card-number">#{item.number}</span>
                                         </div>
 
-                                        <a class="kanban-card-title" href={item.htmlUrl} target="_blank" rel="noreferrer">
+                                        <p class="kanban-card-title">
                                           {item.title}
-                                        </a>
+                                        </p>
 
                                         <p class="kanban-card-meta">
                                           <span>{formatUpdatedAt(item.updatedAt)}</span>
@@ -1095,6 +1332,135 @@ export function MainLayout() {
           </button>
         </Show>
       </section>
+
+      <aside class="sidebar-right" aria-label="Selected issue details" aria-hidden={!selectedBoardItem()}>
+        <Show when={selectedBoardItem()} keyed>
+          {(item) => {
+            return (
+              <>
+                <header class="sidebar-issue-header">
+                  <div class="sidebar-issue-header-copy">
+                    <p class="sidebar-issue-kicker">
+                      {item.isPullRequest ? "Pull request" : "Issue"} #{item.number}
+                    </p>
+                    <h3 class="sidebar-issue-title">{item.title}</h3>
+                  </div>
+                  <button
+                    type="button"
+                    class="sidebar-issue-close"
+                    aria-label="Close issue details"
+                    title="Close details"
+                    onClick={closeIssuePanel}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M6 6 18 18" />
+                      <path d="M18 6 6 18" />
+                    </svg>
+                  </button>
+                </header>
+
+                <div class="sidebar-issue-content">
+                  <section class="sidebar-issue-section">
+                    <p class="sidebar-issue-section-title">Issue Text</p>
+                    <Show
+                      when={item.body && item.body.trim().length > 0}
+                      fallback={<p class="sidebar-issue-inline-empty">No issue text provided.</p>}
+                    >
+                      <div class="sidebar-issue-body-content">
+                        <For each={parseIssueBody(item.body ?? "")}>
+                          {(block) => {
+                            if (block.kind === "code") {
+                              return (
+                                <pre class="sidebar-issue-code-block">
+                                  <Show when={block.language}>
+                                    <span class="sidebar-issue-code-language">{block.language}</span>
+                                  </Show>
+                                  <code
+                                    class="hljs sidebar-issue-code"
+                                    innerHTML={highlightIssueCode(block.code, block.language)}
+                                  />
+                                </pre>
+                              );
+                            }
+
+                            return (
+                              <p class="sidebar-issue-body-paragraph">
+                                <For each={parseIssueInlineTokens(block.text)}>
+                                  {(token) => {
+                                    if (token.kind === "inlineCode") {
+                                      return <code class="sidebar-issue-inline-code">{token.value}</code>;
+                                    }
+
+                                    return token.value;
+                                  }}
+                                </For>
+                              </p>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                  </section>
+
+                  <section class="sidebar-issue-section">
+                    <p class="sidebar-issue-section-title">Assignees</p>
+                    <Show
+                      when={item.assignees.length > 0}
+                      fallback={<p class="sidebar-issue-inline-empty">Unassigned</p>}
+                    >
+                      <div class="sidebar-issue-inline-list">
+                        <For each={item.assignees}>{(assignee) => <span class="sidebar-issue-pill">@{assignee}</span>}</For>
+                      </div>
+                    </Show>
+                  </section>
+
+                  <section class="sidebar-issue-section">
+                    <p class="sidebar-issue-section-title">Labels</p>
+                    <Show when={item.labels.length > 0} fallback={<p class="sidebar-issue-inline-empty">No labels</p>}>
+                      <div class="sidebar-issue-inline-list">
+                        <For each={item.labels}>{(label) => <span class="sidebar-issue-pill">{label}</span>}</For>
+                      </div>
+                    </Show>
+                  </section>
+
+                  <div class="sidebar-issue-actions">
+                    <a
+                      class="sidebar-issue-link"
+                      href={item.htmlUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void openGithubItemPage(item.htmlUrl);
+                      }}
+                    >
+                      <svg class="sidebar-issue-github-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d={siGithub.path} />
+                      </svg>
+                      <span>Open on GitHub</span>
+                    </a>
+                    <button
+                      type="button"
+                      class="sidebar-issue-agent-btn"
+                      aria-label="Open agent"
+                      title="Open agent"
+                      onClick={() => setIsChatOpen(true)}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M12 2v3" />
+                        <rect x="5" y="7" width="14" height="11" rx="3" />
+                        <path d="M9 12h.01" />
+                        <path d="M15 12h.01" />
+                        <path d="M8 17v2h8v-2" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </>
+            );
+          }}
+        </Show>
+      </aside>
     </div>
   );
 }

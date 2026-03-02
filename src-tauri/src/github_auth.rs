@@ -72,6 +72,7 @@ pub struct GithubRepositoryItem {
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
     pub author_login: Option<String>,
+    pub body: Option<String>,
     pub updated_at: String,
 }
 
@@ -145,6 +146,8 @@ struct GithubRepositoryIssueItem {
     assignees: Vec<GithubRepositoryIssueUser>,
     #[serde(default)]
     user: Option<GithubRepositoryIssueUser>,
+    #[serde(default)]
+    body: Option<String>,
     updated_at: String,
     #[serde(default)]
     pull_request: Option<GithubIssuePullRequestMarker>,
@@ -332,6 +335,7 @@ async fn fetch_repository_items(
                     .map(|assignee| assignee.login)
                     .collect(),
                 author_login: item.user.map(|user| user.login),
+                body: item.body,
                 updated_at: item.updated_at,
             }
         }));
@@ -534,6 +538,22 @@ pub fn github_open_verification_url(url: String) -> Result<(), String> {
 
     if !trimmed.starts_with("https://github.com/login/device") {
         return Err("Invalid verification URL".to_string());
+    }
+
+    webbrowser::open(trimmed)
+        .map(|_| ())
+        .map_err(|e| format!("Unable to open browser: {e}"))
+}
+
+#[tauri::command]
+pub fn github_open_item_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+
+    if !trimmed.starts_with("https://github.com/") {
+        return Err("Invalid GitHub URL".to_string());
     }
 
     webbrowser::open(trimmed)

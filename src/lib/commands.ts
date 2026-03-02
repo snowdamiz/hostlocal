@@ -26,6 +26,7 @@ export interface GithubRepositoryItem {
   labels: string[];
   assignees: string[];
   authorLogin: string | null;
+  body: string | null;
   updatedAt: string;
 }
 
@@ -122,4 +123,8 @@ export function githubAuthLogout(): Promise<void> {
 
 export function githubOpenVerificationUrl(url: string): Promise<void> {
   return invoke<void>("github_open_verification_url", { url });
+}
+
+export function githubOpenItemUrl(url: string): Promise<void> {
+  return invoke<void>("github_open_item_url", { url });
 }

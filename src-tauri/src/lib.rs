@@ -54,6 +54,7 @@ pub fn run() {
             github_auth::github_auth_poll,
             github_auth::github_auth_logout,
             github_auth::github_open_verification_url,
+            github_auth::github_open_item_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
