@@ -2,6 +2,7 @@ import "./App.css";
 import { Match, Switch, createSignal, onMount } from "solid-js";
 import { MainLayout } from "./components/MainLayout";
 import { SetupWizard } from "./components/SetupWizard";
+import { IntakeToastViewport } from "./components/IntakeToastViewport";
 import { WindowControls } from "./components/WindowControls";
 import { getDevelopmentFolder } from "./lib/commands";
 
@@ -27,6 +28,7 @@ function App() {
     <main class={`app ${setupStatus() === "ready" ? "app-main" : "app-onboarding"}`}>
       <div class="drag-region" data-tauri-drag-region />
       <WindowControls />
+      <IntakeToastViewport />
       <Switch>
         <Match when={setupStatus() === "loading"}>
           <section class="setup-shell">
