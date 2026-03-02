@@ -1,9 +1,11 @@
 export type IntakePolicyReasonCode =
   | "missing_intake_label"
   | "empty_body"
+  | "issue_closed"
   | "is_pull_request"
   | "deny_signal_present"
   | "label_persist_failed"
+  | "label_persist_rate_limited"
   | "duplicate_intake_pending";
 
 export interface IntakePolicyReasonCopy {
@@ -32,6 +34,10 @@ export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, I
     violatedRule: "Issue body must include implementation details before intake can start.",
     fixHint: "Add concrete task details to the issue body, then retry.",
   },
+  issue_closed: {
+    violatedRule: "Only open issues can move into In Progress intake.",
+    fixHint: "Reopen the issue before retrying intake.",
+  },
   is_pull_request: {
     violatedRule: "Only issue cards are eligible for intake; pull requests are not intake sources.",
     fixHint: "Move an issue card instead of a pull request card.",
@@ -43,6 +49,10 @@ export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, I
   label_persist_failed: {
     violatedRule: "Required GitHub labels did not persist, so intake cannot be accepted safely.",
     fixHint: "Retry after GitHub label writes are available.",
+  },
+  label_persist_rate_limited: {
+    violatedRule: "GitHub rate limiting prevented required intake labels from persisting.",
+    fixHint: "Wait briefly for the GitHub limit window to reset, then retry.",
   },
   duplicate_intake_pending: {
     violatedRule: "An intake attempt for this issue is already pending and unresolved.",

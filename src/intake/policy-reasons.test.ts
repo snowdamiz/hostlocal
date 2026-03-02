@@ -9,9 +9,11 @@ describe("INTAKE_POLICY_REASON_MAP", () => {
     expect(Object.keys(INTAKE_POLICY_REASON_MAP)).toEqual([
       "missing_intake_label",
       "empty_body",
+      "issue_closed",
       "is_pull_request",
       "deny_signal_present",
       "label_persist_failed",
+      "label_persist_rate_limited",
       "duplicate_intake_pending",
     ]);
   });
