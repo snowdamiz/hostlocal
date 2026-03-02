@@ -24,13 +24,13 @@ function App() {
   };
 
   return (
-    <main class="relative h-full w-full overflow-hidden rounded-[var(--radius-app-shell)] bg-surface-canvas">
-      <div class="absolute inset-x-0 top-0 z-[100] h-[var(--drag-region-height)]" data-tauri-drag-region />
+    <main class={`app ${setupStatus() === "ready" ? "app-main" : "app-onboarding"}`}>
+      <div class="drag-region" data-tauri-drag-region />
       <WindowControls />
       <Switch>
         <Match when={setupStatus() === "loading"}>
-          <section class="grid h-full w-full place-items-center">
-            <div class="h-5 w-5 animate-[spin_700ms_linear_infinite] rounded-full border-2 border-border-strong border-t-text-muted" />
+          <section class="setup-shell">
+            <div class="setup-spinner" />
           </section>
         </Match>
         <Match when={setupStatus() === "wizard"}>
