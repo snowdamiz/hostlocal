@@ -23,6 +23,7 @@ const CANVAS_MAX_ZOOM = 2.6;
 const CANVAS_RESET_DURATION_MS = 320;
 const BOARD_ORIGIN_X = 66;
 const BOARD_ORIGIN_Y = 180;
+const KANBAN_COLUMN_PAGE_SIZE = 6;
 
 const KANBAN_COLUMNS: ReadonlyArray<{ key: KanbanColumnKey; title: string; description: string }> = [
   {
@@ -93,6 +94,13 @@ const formatIssueCountLabel = (assigneeCount: number) => {
   return `${assigneeCount} assignees`;
 };
 
+const createDefaultVisibleCardCountByColumn = (): Record<KanbanColumnKey, number> => ({
+  todo: KANBAN_COLUMN_PAGE_SIZE,
+  inProgress: KANBAN_COLUMN_PAGE_SIZE,
+  inReview: KANBAN_COLUMN_PAGE_SIZE,
+  done: KANBAN_COLUMN_PAGE_SIZE,
+});
+
 export function MainLayout() {
   const [githubUser, setGithubUser] = createSignal<GithubUser | null>(null);
   const [authError, setAuthError] = createSignal<string | null>(null);
@@ -110,6 +118,9 @@ export function MainLayout() {
   const [repositoryItemsError, setRepositoryItemsError] = createSignal<string | null>(null);
   const [isRepositoryItemsLoading, setIsRepositoryItemsLoading] = createSignal(false);
   const [manualColumnByItemId, setManualColumnByItemId] = createSignal<Record<number, KanbanColumnKey>>({});
+  const [visibleCardCountByColumn, setVisibleCardCountByColumn] = createSignal<Record<KanbanColumnKey, number>>(
+    createDefaultVisibleCardCountByColumn(),
+  );
   const [draggingItemId, setDraggingItemId] = createSignal<number | null>(null);
   const [dragOverColumn, setDragOverColumn] = createSignal<KanbanColumnKey | null>(null);
   const [canvasView, setCanvasView] = createSignal({
@@ -407,6 +418,7 @@ export function MainLayout() {
     setRepositoryItemsError(null);
     setIsRepositoryItemsLoading(false);
     setManualColumnByItemId({});
+    setVisibleCardCountByColumn(createDefaultVisibleCardCountByColumn());
     setDraggingItemId(null);
     setDragOverColumn(null);
   };
@@ -450,6 +462,7 @@ export function MainLayout() {
     setIsRepositoryItemsLoading(true);
     setRepositoryItemsError(null);
     setManualColumnByItemId({});
+    setVisibleCardCountByColumn(createDefaultVisibleCardCountByColumn());
 
     try {
       const items = await githubListRepositoryItems(repositoryFullName);
@@ -726,6 +739,13 @@ export function MainLayout() {
     setDragOverColumn(null);
   };
 
+  const loadMoreColumnCards = (columnKey: KanbanColumnKey) => {
+    setVisibleCardCountByColumn((current) => ({
+      ...current,
+      [columnKey]: current[columnKey] + KANBAN_COLUMN_PAGE_SIZE,
+    }));
+  };
+
   createEffect(() => {
     const repository = selectedRepository();
     const user = githubUser();
@@ -950,6 +970,10 @@ export function MainLayout() {
                       <For each={KANBAN_COLUMNS}>
                         {(column) => {
                           const columnItems = () => groupedItemsByColumn()[column.key];
+                          const visibleColumnItems = () =>
+                            columnItems().slice(0, visibleCardCountByColumn()[column.key]);
+                          const hasMoreColumnItems = () =>
+                            columnItems().length > visibleCardCountByColumn()[column.key];
 
                           return (
                             <section
@@ -969,7 +993,7 @@ export function MainLayout() {
                               </header>
                               <div class="kanban-column-cards">
                                 <Show when={columnItems().length > 0} fallback={<p class="kanban-column-empty">No items</p>}>
-                                  <For each={columnItems()}>
+                                  <For each={visibleColumnItems()}>
                                     {(item) => (
                                       <article
                                         class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}`}
@@ -1000,6 +1024,15 @@ export function MainLayout() {
                                       </article>
                                     )}
                                   </For>
+                                </Show>
+                                <Show when={hasMoreColumnItems()}>
+                                  <button
+                                    type="button"
+                                    class="kanban-column-load-more"
+                                    onClick={() => loadMoreColumnCards(column.key)}
+                                  >
+                                    Load more
+                                  </button>
                                 </Show>
                               </div>
                             </section>
