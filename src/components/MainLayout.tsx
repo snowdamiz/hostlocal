@@ -1406,51 +1406,45 @@ export function MainLayout() {
           {(item) => {
             return (
               <>
-                <header class="flex items-start justify-between gap-3 border-b border-border-strong px-4 py-3">
-                  <div class="min-w-0">
-                    <p class="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+                <header class="sidebar-issue-header">
+                  <div class="sidebar-issue-header-copy">
+                    <p class="sidebar-issue-kicker">
                       {item.isPullRequest ? "Pull request" : "Issue"} #{item.number}
                     </p>
-                    <h3 class="mt-1 line-clamp-3 text-[13px] font-semibold leading-snug text-text-strong">{item.title}</h3>
+                    <h3 class="sidebar-issue-title">{item.title}</h3>
                   </div>
                   <button
                     type="button"
-                    class="grid h-8 w-8 shrink-0 place-items-center rounded-[calc(var(--radius-app-shell)-0.35rem)] border border-border-strong bg-surface-canvas/55 text-text-muted transition-colors hover:bg-surface-elevated/70 hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+                    class="sidebar-issue-close"
                     aria-label="Close issue details"
                     title="Close details"
                     onClick={closeIssuePanel}
                   >
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M6 6 18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                      <path d="M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M6 6 18 18" />
+                      <path d="M18 6 6 18" />
                     </svg>
                   </button>
                 </header>
 
-                <div class="min-h-0 flex flex-1 flex-col overflow-y-auto px-4 py-3">
-                  <section class="flex-1">
-                    <p class="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">Issue text</p>
+                <div class="sidebar-issue-content">
+                  <section class="sidebar-issue-section">
+                    <p class="sidebar-issue-section-title">Issue Text</p>
                     <Show
                       when={item.body && item.body.trim().length > 0}
-                      fallback={
-                        <p class="mt-2 rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-border-strong bg-surface-canvas/50 px-3 py-2 text-[11px] text-text-muted">
-                          No issue text provided.
-                        </p>
-                      }
+                      fallback={<p class="sidebar-issue-inline-empty">No issue text provided.</p>}
                     >
-                      <div class="mt-2 space-y-3 text-[12px] leading-relaxed text-text-body">
+                      <div class="sidebar-issue-body-content">
                         <For each={parseIssueBody(item.body ?? "")}>
                           {(block) => {
                             if (block.kind === "code") {
                               return (
-                                <pre class="overflow-x-auto rounded-[calc(var(--radius-app-shell)-0.2rem)] border border-border-strong bg-surface-canvas/72 p-3">
+                                <pre class="sidebar-issue-code-block">
                                   <Show when={block.language}>
-                                    <span class="mb-2 inline-flex rounded-[0.375rem] border border-border-strong bg-surface-panel/75 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-text-muted">
-                                      {block.language}
-                                    </span>
+                                    <span class="sidebar-issue-code-language">{block.language}</span>
                                   </Show>
                                   <code
-                                    class="hljs block whitespace-pre text-[11px] leading-relaxed text-text-strong"
+                                    class="hljs sidebar-issue-code"
                                     innerHTML={highlightIssueCode(block.code, block.language)}
                                   />
                                 </pre>
@@ -1458,15 +1452,11 @@ export function MainLayout() {
                             }
 
                             return (
-                              <p class="text-[12px] leading-relaxed text-text-body">
+                              <p class="sidebar-issue-body-paragraph">
                                 <For each={parseIssueInlineTokens(block.text)}>
                                   {(token) => {
                                     if (token.kind === "inlineCode") {
-                                      return (
-                                        <code class="rounded-[0.25rem] border border-border-strong bg-surface-canvas/65 px-1 py-0.5 text-[11px] text-text-strong">
-                                          {token.value}
-                                        </code>
-                                      );
+                                      return <code class="sidebar-issue-inline-code">{token.value}</code>;
                                     }
 
                                     return token.value;
@@ -1480,9 +1470,9 @@ export function MainLayout() {
                     </Show>
                   </section>
 
-                  <div class="mt-4 border-t border-border-strong pt-3">
+                  <div class="sidebar-issue-actions">
                     <a
-                      class="inline-flex items-center gap-2 rounded-[calc(var(--radius-app-shell)-0.3rem)] border border-border-strong bg-surface-canvas/60 px-3 py-1.5 text-[11px] font-medium text-text-body transition-colors hover:bg-surface-elevated/70 hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+                      class="sidebar-issue-link"
                       href={item.htmlUrl}
                       target="_blank"
                       rel="noreferrer"
@@ -1491,7 +1481,7 @@ export function MainLayout() {
                         void openGithubItemPage(item.htmlUrl);
                       }}
                     >
-                      <svg class="h-4 w-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                      <svg class="sidebar-issue-github-icon" viewBox="0 0 24 24" aria-hidden="true">
                         <path d={siGithub.path} />
                       </svg>
                       <span>Open on GitHub</span>
