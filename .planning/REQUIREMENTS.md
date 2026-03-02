@@ -7,6 +7,10 @@
 
 Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phases.
 
+### Styling Foundation
+
+- [ ] **STYLE-01**: User-facing v1 app surfaces use Tailwind v4 utilities and established design tokens instead of legacy global CSS-file styling.
+
 ### Issue Intake
 
 - [ ] **INTK-01**: User can move an issue from Todo to In Progress to start an agent run when policy checks pass.
@@ -82,33 +86,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INTK-01 | TBD | Pending |
-| INTK-02 | TBD | Pending |
-| RUN-01 | TBD | Pending |
-| RUN-02 | TBD | Pending |
-| RUN-03 | TBD | Pending |
-| ORCH-01 | TBD | Pending |
-| ORCH-02 | TBD | Pending |
-| CTRL-01 | TBD | Pending |
-| CTRL-02 | TBD | Pending |
-| CTRL-03 | TBD | Pending |
-| CTRL-04 | TBD | Pending |
-| VAL-01 | TBD | Pending |
-| VAL-02 | TBD | Pending |
-| GIT-01 | TBD | Pending |
-| GIT-02 | TBD | Pending |
-| GIT-03 | TBD | Pending |
-| GIT-04 | TBD | Pending |
-| OBS-01 | TBD | Pending |
-| OBS-02 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| SEC-02 | TBD | Pending |
+| STYLE-01 | Phase 1 | Pending |
+| INTK-01 | Phase 2 | Pending |
+| INTK-02 | Phase 2 | Pending |
+| RUN-01 | Phase 3 | Pending |
+| RUN-02 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Pending |
+| ORCH-01 | Phase 4 | Pending |
+| ORCH-02 | Phase 4 | Pending |
+| CTRL-01 | Phase 6 | Pending |
+| CTRL-02 | Phase 6 | Pending |
+| CTRL-03 | Phase 6 | Pending |
+| CTRL-04 | Phase 6 | Pending |
+| VAL-01 | Phase 7 | Pending |
+| VAL-02 | Phase 7 | Pending |
+| GIT-01 | Phase 8 | Pending |
+| GIT-02 | Phase 8 | Pending |
+| GIT-03 | Phase 9 | Pending |
+| GIT-04 | Phase 9 | Pending |
+| OBS-01 | Phase 5 | Pending |
+| OBS-02 | Phase 5 | Pending |
+| SEC-01 | Phase 5 | Pending |
+| SEC-02 | Phase 3 | Pending |
 
 **Coverage:**
-- v1 requirements: 21 total
-- Mapped to phases: 0
-- Unmapped: 21 ⚠️
+- v1 requirements: 22 total
+- Mapped to phases: 22
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-02*
-*Last updated: 2026-03-02 after initial definition*
+*Last updated: 2026-03-02 after roadmap revision*
