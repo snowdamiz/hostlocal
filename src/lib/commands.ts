@@ -6,6 +6,29 @@ export interface GithubUser {
   htmlUrl: string;
 }
 
+export interface GithubRepository {
+  id: number;
+  name: string;
+  fullName: string;
+  htmlUrl: string;
+  isPrivate: boolean;
+  description: string | null;
+}
+
+export interface GithubRepositoryItem {
+  id: number;
+  number: number;
+  title: string;
+  htmlUrl: string;
+  state: "open" | "closed";
+  isPullRequest: boolean;
+  draft: boolean;
+  labels: string[];
+  assignees: string[];
+  authorLogin: string | null;
+  updatedAt: string;
+}
+
 export interface GithubAuthStatus {
   connected: boolean;
   user: GithubUser | null;
@@ -75,6 +98,14 @@ export function createProject(projectName: string): Promise<CreatedProject> {
 
 export function githubAuthStatus(): Promise<GithubAuthStatus> {
   return invoke<GithubAuthStatus>("github_auth_status");
+}
+
+export function githubListRepositories(): Promise<GithubRepository[]> {
+  return invoke<GithubRepository[]>("github_list_repositories");
+}
+
+export function githubListRepositoryItems(repositoryFullName: string): Promise<GithubRepositoryItem[]> {
+  return invoke<GithubRepositoryItem[]>("github_list_repository_items", { repositoryFullName });
 }
 
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {

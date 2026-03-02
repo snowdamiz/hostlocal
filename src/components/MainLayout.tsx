@@ -1,23 +1,97 @@
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import {
   githubAuthLogout,
   githubAuthPoll,
   githubAuthStart,
   githubAuthStatus,
   githubListRepositories,
+  githubListRepositoryItems,
   githubOpenVerificationUrl,
   type GithubDeviceAuthStart,
   type GithubRepository,
+  type GithubRepositoryItem,
   type GithubUser,
 } from "../lib/commands";
 
+type KanbanColumnKey = "todo" | "inProgress" | "inReview" | "done";
 const CANVAS_DEFAULT_PAN_X = 0;
 const CANVAS_DEFAULT_PAN_Y = 0;
-const CANVAS_DEFAULT_ZOOM = 1;
+const CANVAS_DEFAULT_ZOOM = 0.60;
 const CANVAS_GRID_UNIT = 24;
 const CANVAS_MIN_ZOOM = 0.35;
 const CANVAS_MAX_ZOOM = 2.6;
 const CANVAS_RESET_DURATION_MS = 320;
+const BOARD_ORIGIN_X = 66;
+const BOARD_ORIGIN_Y = 180;
+
+const KANBAN_COLUMNS: ReadonlyArray<{ key: KanbanColumnKey; title: string; description: string }> = [
+  {
+    key: "todo",
+    title: "Todo",
+    description: "Not started",
+  },
+  {
+    key: "inProgress",
+    title: "In Progress",
+    description: "Active work",
+  },
+  {
+    key: "inReview",
+    title: "In Review",
+    description: "Awaiting review",
+  },
+  {
+    key: "done",
+    title: "Done",
+    description: "Closed and shipped",
+  },
+];
+
+const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
+
+const parseTimestamp = (isoDate: string) => {
+  const timestamp = Date.parse(isoDate);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const formatUpdatedAt = (isoDate: string) => {
+  const timestamp = parseTimestamp(isoDate);
+  if (timestamp === 0) {
+    return "Updated recently";
+  }
+
+  const date = new Date(timestamp);
+  return `Updated ${date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+};
+
+const inferDefaultColumn = (item: GithubRepositoryItem): KanbanColumnKey => {
+  if (item.state === "closed") {
+    return "done";
+  }
+
+  if (item.isPullRequest) {
+    return "inReview";
+  }
+
+  const hasInProgressLabel = item.labels.some((label) => ISSUE_IN_PROGRESS_LABELS.has(label.trim().toLowerCase()));
+  if (hasInProgressLabel || item.assignees.length > 0) {
+    return "inProgress";
+  }
+
+  return "todo";
+};
+
+const formatIssueCountLabel = (assigneeCount: number) => {
+  if (assigneeCount === 1) {
+    return "1 assignee";
+  }
+
+  return `${assigneeCount} assignees`;
+};
 
 export function MainLayout() {
   const [githubUser, setGithubUser] = createSignal<GithubUser | null>(null);
@@ -32,10 +106,22 @@ export function MainLayout() {
   const [repositoryListError, setRepositoryListError] = createSignal<string | null>(null);
   const [isRepositoryListLoading, setIsRepositoryListLoading] = createSignal(false);
   const [selectedRepositoryId, setSelectedRepositoryId] = createSignal<number | null>(null);
-  const [isChatOpen, setIsChatOpen] = createSignal(false);
+  const [repositoryItems, setRepositoryItems] = createSignal<GithubRepositoryItem[]>([]);
+  const [repositoryItemsError, setRepositoryItemsError] = createSignal<string | null>(null);
+  const [isRepositoryItemsLoading, setIsRepositoryItemsLoading] = createSignal(false);
+  const [manualColumnByItemId, setManualColumnByItemId] = createSignal<Record<number, KanbanColumnKey>>({});
+  const [draggingItemId, setDraggingItemId] = createSignal<number | null>(null);
+  const [dragOverColumn, setDragOverColumn] = createSignal<KanbanColumnKey | null>(null);
+  const [canvasView, setCanvasView] = createSignal({
+    panX: CANVAS_DEFAULT_PAN_X,
+    panY: CANVAS_DEFAULT_PAN_Y,
+    zoom: CANVAS_DEFAULT_ZOOM,
+  });
   const [isCanvasPanning, setIsCanvasPanning] = createSignal(false);
+  const [isChatOpen, setIsChatOpen] = createSignal(false);
 
   let pollTimeoutId: number | null = null;
+  let repositoryItemsRequestId = 0;
   let canvasResizeObserver: ResizeObserver | null = null;
   let activeCanvasPointerId: number | null = null;
   let resetAnimationFrameId: number | null = null;
@@ -43,12 +129,6 @@ export function MainLayout() {
   let lastPointerY = 0;
   let canvasViewportRef: HTMLDivElement | undefined;
   let canvasGridRef: HTMLCanvasElement | undefined;
-
-  const canvasTransform = {
-    panX: CANVAS_DEFAULT_PAN_X,
-    panY: CANVAS_DEFAULT_PAN_Y,
-    zoom: CANVAS_DEFAULT_ZOOM,
-  };
 
   const formatInvokeError = (error: unknown, fallback: string) => {
     if (error instanceof Error && error.message) {
@@ -83,6 +163,25 @@ export function MainLayout() {
       window.cancelAnimationFrame(resetAnimationFrameId);
       resetAnimationFrameId = null;
     }
+  };
+
+  const boardCameraStyle = createMemo(() => {
+    const view = canvasView();
+    return {
+      transform: `translate3d(${BOARD_ORIGIN_X + view.panX}px, ${BOARD_ORIGIN_Y + view.panY}px, 0) scale(${view.zoom})`,
+    };
+  });
+
+  const shouldPanCanvasFromTarget = (target: EventTarget | null, pointerButton: number) => {
+    if (pointerButton === 1) {
+      return true;
+    }
+
+    if (!(target instanceof Element)) {
+      return true;
+    }
+
+    return !target.closest("a,button,input,textarea,select,label,[draggable='true'],.kanban-card");
   };
 
   const getCanvasTokenColor = (tokenName: string, fallbackTokenName: string) => {
@@ -141,25 +240,25 @@ export function MainLayout() {
       return;
     }
 
-    const width = canvasGridRef.width / (window.devicePixelRatio || 1);
-    const height = canvasGridRef.height / (window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvasGridRef.width / dpr;
+    const height = canvasGridRef.height / dpr;
 
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvasGridRef.width, canvasGridRef.height);
     context.restore();
-    context.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const gridColor = getCanvasTokenColor("--content-canvas-grid-line", "--app-grid-line");
-    const originX = width / 2 + canvasTransform.panX;
-    const originY = height / 2 + canvasTransform.panY;
-    const gridSpacing = CANVAS_GRID_UNIT * canvasTransform.zoom;
-
-    if (gridSpacing >= 8) {
-      context.strokeStyle = gridColor;
-      context.lineWidth = 1;
-      drawGridLines(context, width, height, gridSpacing, originX, originY);
+    const view = canvasView();
+    const spacing = CANVAS_GRID_UNIT * view.zoom;
+    if (spacing < 8) {
+      return;
     }
+
+    context.strokeStyle = getCanvasTokenColor("--content-canvas-grid-line", "--app-grid-line");
+    context.lineWidth = 1;
+    drawGridLines(context, width, height, spacing, BOARD_ORIGIN_X + view.panX, BOARD_ORIGIN_Y + view.panY);
   };
 
   const resizeCanvas = () => {
@@ -177,19 +276,18 @@ export function MainLayout() {
   const resetCanvasView = () => {
     stopCanvasResetAnimation();
 
-    const startPanX = canvasTransform.panX;
-    const startPanY = canvasTransform.panY;
-    const startZoom = canvasTransform.zoom;
+    const startView = canvasView();
     const startedAt = performance.now();
 
     const animateFrame = (timestamp: number) => {
       const progress = Math.min(1, (timestamp - startedAt) / CANVAS_RESET_DURATION_MS);
       const easedProgress = 1 - (1 - progress) ** 3;
 
-      canvasTransform.panX = startPanX + (CANVAS_DEFAULT_PAN_X - startPanX) * easedProgress;
-      canvasTransform.panY = startPanY + (CANVAS_DEFAULT_PAN_Y - startPanY) * easedProgress;
-      canvasTransform.zoom = startZoom + (CANVAS_DEFAULT_ZOOM - startZoom) * easedProgress;
-      drawCanvas();
+      setCanvasView({
+        panX: startView.panX + (CANVAS_DEFAULT_PAN_X - startView.panX) * easedProgress,
+        panY: startView.panY + (CANVAS_DEFAULT_PAN_Y - startView.panY) * easedProgress,
+        zoom: startView.zoom + (CANVAS_DEFAULT_ZOOM - startView.zoom) * easedProgress,
+      });
 
       if (progress < 1) {
         resetAnimationFrameId = window.requestAnimationFrame(animateFrame);
@@ -197,10 +295,11 @@ export function MainLayout() {
       }
 
       resetAnimationFrameId = null;
-      canvasTransform.panX = CANVAS_DEFAULT_PAN_X;
-      canvasTransform.panY = CANVAS_DEFAULT_PAN_Y;
-      canvasTransform.zoom = CANVAS_DEFAULT_ZOOM;
-      drawCanvas();
+      setCanvasView({
+        panX: CANVAS_DEFAULT_PAN_X,
+        panY: CANVAS_DEFAULT_PAN_Y,
+        zoom: CANVAS_DEFAULT_ZOOM,
+      });
     };
 
     resetAnimationFrameId = window.requestAnimationFrame(animateFrame);
@@ -212,6 +311,10 @@ export function MainLayout() {
     }
 
     if (!canvasViewportRef) {
+      return;
+    }
+
+    if (!shouldPanCanvasFromTarget(event.target, event.button)) {
       return;
     }
 
@@ -238,9 +341,11 @@ export function MainLayout() {
       return;
     }
 
-    canvasTransform.panX += deltaX;
-    canvasTransform.panY += deltaY;
-    drawCanvas();
+    setCanvasView((current) => ({
+      ...current,
+      panX: current.panX + deltaX,
+      panY: current.panY + deltaY,
+    }));
     event.preventDefault();
   };
 
@@ -267,24 +372,43 @@ export function MainLayout() {
     const rect = canvasViewportRef.getBoundingClientRect();
     const pointX = event.clientX - rect.left;
     const pointY = event.clientY - rect.top;
+    const current = canvasView();
     const zoomFactor = Math.exp(-event.deltaY * 0.0015);
-    const nextZoom = clamp(canvasTransform.zoom * zoomFactor, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM);
+    const nextZoom = clamp(current.zoom * zoomFactor, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM);
 
-    if (Math.abs(nextZoom - canvasTransform.zoom) < 0.0001) {
+    if (Math.abs(nextZoom - current.zoom) < 0.0001) {
       event.preventDefault();
       return;
     }
 
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const worldX = (pointX - centerX - canvasTransform.panX) / canvasTransform.zoom;
-    const worldY = (pointY - centerY - canvasTransform.panY) / canvasTransform.zoom;
+    const worldX = (pointX - BOARD_ORIGIN_X - current.panX) / current.zoom;
+    const worldY = (pointY - BOARD_ORIGIN_Y - current.panY) / current.zoom;
 
-    canvasTransform.zoom = nextZoom;
-    canvasTransform.panX = pointX - centerX - worldX * nextZoom;
-    canvasTransform.panY = pointY - centerY - worldY * nextZoom;
-    drawCanvas();
+    setCanvasView({
+      panX: pointX - BOARD_ORIGIN_X - worldX * nextZoom,
+      panY: pointY - BOARD_ORIGIN_Y - worldY * nextZoom,
+      zoom: nextZoom,
+    });
+
     event.preventDefault();
+  };
+
+  const handleCanvasDoubleClick = (event: MouseEvent) => {
+    if (!shouldPanCanvasFromTarget(event.target, 0)) {
+      return;
+    }
+
+    resetCanvasView();
+  };
+
+  const clearRepositoryItemState = () => {
+    repositoryItemsRequestId += 1;
+    setRepositoryItems([]);
+    setRepositoryItemsError(null);
+    setIsRepositoryItemsLoading(false);
+    setManualColumnByItemId({});
+    setDraggingItemId(null);
+    setDragOverColumn(null);
   };
 
   const clearRepositoryState = () => {
@@ -292,6 +416,7 @@ export function MainLayout() {
     setSelectedRepositoryId(null);
     setRepositoryListError(null);
     setIsRepositoryListLoading(false);
+    clearRepositoryItemState();
   };
 
   const selectedRepository = () => {
@@ -301,6 +426,52 @@ export function MainLayout() {
     }
 
     return repositories().find((repository) => repository.id === repositoryId) ?? null;
+  };
+
+  const groupedItemsByColumn = createMemo(() => {
+    const grouped: Record<KanbanColumnKey, GithubRepositoryItem[]> = {
+      todo: [],
+      inProgress: [],
+      inReview: [],
+      done: [],
+    };
+
+    const manuallyAssignedColumns = manualColumnByItemId();
+    for (const item of repositoryItems()) {
+      const column = manuallyAssignedColumns[item.id] ?? inferDefaultColumn(item);
+      grouped[column].push(item);
+    }
+
+    return grouped;
+  });
+
+  const loadRepositoryItems = async (repositoryFullName: string) => {
+    const requestId = ++repositoryItemsRequestId;
+    setIsRepositoryItemsLoading(true);
+    setRepositoryItemsError(null);
+    setManualColumnByItemId({});
+
+    try {
+      const items = await githubListRepositoryItems(repositoryFullName);
+      if (requestId !== repositoryItemsRequestId) {
+        return;
+      }
+
+      setRepositoryItems(
+        [...items].sort((left, right) => parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)),
+      );
+    } catch (error) {
+      if (requestId !== repositoryItemsRequestId) {
+        return;
+      }
+
+      setRepositoryItems([]);
+      setRepositoryItemsError(formatInvokeError(error, "Unable to load board items from GitHub."));
+    } finally {
+      if (requestId === repositoryItemsRequestId) {
+        setIsRepositoryItemsLoading(false);
+      }
+    }
   };
 
   const loadRepositories = async () => {
@@ -469,14 +640,115 @@ export function MainLayout() {
     }
   };
 
+  const resolveDraggedItemId = (event: DragEvent) => {
+    const activeDraggingItemId = draggingItemId();
+    if (activeDraggingItemId !== null) {
+      return activeDraggingItemId;
+    }
+
+    const serializedItemId = event.dataTransfer?.getData("text/plain");
+    if (!serializedItemId) {
+      return null;
+    }
+
+    const parsedItemId = Number.parseInt(serializedItemId, 10);
+    if (!Number.isFinite(parsedItemId)) {
+      return null;
+    }
+
+    return parsedItemId;
+  };
+
+  const handleCardDragStart = (event: DragEvent, itemId: number) => {
+    setDraggingItemId(itemId);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(itemId));
+    }
+  };
+
+  const handleCardDragEnd = () => {
+    setDraggingItemId(null);
+    setDragOverColumn(null);
+  };
+
+  const handleColumnDragOver = (event: DragEvent, columnKey: KanbanColumnKey) => {
+    if (resolveDraggedItemId(event) === null) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+
+    if (dragOverColumn() !== columnKey) {
+      setDragOverColumn(columnKey);
+    }
+  };
+
+  const handleColumnDragLeave = (event: DragEvent, columnKey: KanbanColumnKey) => {
+    const currentTarget = event.currentTarget;
+    if (!(currentTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    if (dragOverColumn() === columnKey) {
+      setDragOverColumn(null);
+    }
+  };
+
+  const handleColumnDrop = (event: DragEvent, columnKey: KanbanColumnKey) => {
+    event.preventDefault();
+
+    const itemId = resolveDraggedItemId(event);
+    if (itemId === null) {
+      return;
+    }
+
+    setManualColumnByItemId((currentColumns) => {
+      if (currentColumns[itemId] === columnKey) {
+        return currentColumns;
+      }
+
+      return {
+        ...currentColumns,
+        [itemId]: columnKey,
+      };
+    });
+
+    setDraggingItemId(null);
+    setDragOverColumn(null);
+  };
+
+  createEffect(() => {
+    const repository = selectedRepository();
+    const user = githubUser();
+
+    if (!user || !repository) {
+      clearRepositoryItemState();
+      return;
+    }
+
+    void loadRepositoryItems(repository.fullName);
+  });
+
+  createEffect(() => {
+    canvasView();
+    drawCanvas();
+  });
+
   onMount(() => {
     void refreshAuthState();
-
     resizeCanvas();
     canvasResizeObserver = new ResizeObserver(() => {
       resizeCanvas();
     });
-
     if (canvasViewportRef) {
       canvasResizeObserver.observe(canvasViewportRef);
     }
@@ -485,7 +757,6 @@ export function MainLayout() {
   onCleanup(() => {
     clearPollTimer();
     stopCanvasResetAnimation();
-
     if (canvasResizeObserver) {
       canvasResizeObserver.disconnect();
       canvasResizeObserver = null;
@@ -496,7 +767,6 @@ export function MainLayout() {
     <div class="layout">
       <aside class="sidebar-left">
         <div class="sidebar-repositories-panel">
-          <p class="sidebar-section-title">Repositories</p>
           <div class="sidebar-repositories">
             <Show when={repositoryListError()}>
               {(error) => (
@@ -516,11 +786,9 @@ export function MainLayout() {
                 >
                   <For each={repositories()}>
                     {(repository) => (
-                      <a
+                      <button
+                        type="button"
                         class={`sidebar-repository-item${selectedRepositoryId() === repository.id ? " is-selected" : ""}`}
-                        href={repository.htmlUrl}
-                        target="_blank"
-                        rel="noreferrer"
                         title={repository.fullName}
                         onClick={() => setSelectedRepositoryId(repository.id)}
                       >
@@ -530,14 +798,13 @@ export function MainLayout() {
                         </svg>
                         <p class="sidebar-repository-label">
                           <span class="sidebar-repository-name">{repository.name}</span>
-                          <span class="sidebar-repository-full-name">{repository.fullName}</span>
                         </p>
                         <span
                           class={`sidebar-repository-visibility${repository.isPrivate ? " is-private" : ""}`}
                         >
                           {repository.isPrivate ? "Private" : "Public"}
                         </span>
-                      </a>
+                      </button>
                     )}
                   </For>
                 </Show>
@@ -632,7 +899,7 @@ export function MainLayout() {
           <h2>{selectedRepository()?.fullName ?? "GitHub repositories"}</h2>
           <button
             type="button"
-            class="content-canvas-reset-btn"
+            class="content-board-refresh-btn"
             aria-label="Reset canvas view"
             title="Reset canvas view"
             onClick={resetCanvasView}
@@ -646,6 +913,7 @@ export function MainLayout() {
             </svg>
           </button>
         </header>
+
         <div
           ref={(element) => {
             canvasViewportRef = element;
@@ -656,6 +924,7 @@ export function MainLayout() {
           onPointerUp={endCanvasPan}
           onPointerCancel={endCanvasPan}
           onWheel={zoomCanvas}
+          onDblClick={handleCanvasDoubleClick}
         >
           <canvas
             ref={(element) => {
@@ -665,7 +934,86 @@ export function MainLayout() {
             aria-label="Interactive canvas background"
             role="img"
           />
+          <div class="content-canvas-layer">
+            <div class="content-canvas-world" style={boardCameraStyle()}>
+              <Show when={selectedRepository()} fallback={<p class="kanban-state">Select a repository to open its board.</p>}>
+                <Show when={!isRepositoryItemsLoading()} fallback={<p class="kanban-state">Loading board items...</p>}>
+                  <Show
+                    when={!repositoryItemsError()}
+                    fallback={
+                      <p class="kanban-state kanban-state-error" role="alert">
+                        {repositoryItemsError() ?? "Unable to load board items."}
+                      </p>
+                    }
+                  >
+                    <div class="kanban-board" role="list" aria-label="Repository work board">
+                      <For each={KANBAN_COLUMNS}>
+                        {(column) => {
+                          const columnItems = () => groupedItemsByColumn()[column.key];
+
+                          return (
+                            <section
+                              class={`kanban-column${dragOverColumn() === column.key ? " is-drop-target" : ""}`}
+                              role="listitem"
+                              aria-label={`${column.title} column`}
+                              onDragOver={(event) => handleColumnDragOver(event, column.key)}
+                              onDragLeave={(event) => handleColumnDragLeave(event, column.key)}
+                              onDrop={(event) => handleColumnDrop(event, column.key)}
+                            >
+                              <header class="kanban-column-header">
+                                <div>
+                                  <p class="kanban-column-title">{column.title}</p>
+                                  <p class="kanban-column-description">{column.description}</p>
+                                </div>
+                                <span class="kanban-column-count">{columnItems().length}</span>
+                              </header>
+                              <div class="kanban-column-cards">
+                                <Show when={columnItems().length > 0} fallback={<p class="kanban-column-empty">No items</p>}>
+                                  <For each={columnItems()}>
+                                    {(item) => (
+                                      <article
+                                        class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}`}
+                                        draggable
+                                        onDragStart={(event) => handleCardDragStart(event, item.id)}
+                                        onDragEnd={handleCardDragEnd}
+                                      >
+                                        <div class="kanban-card-top">
+                                          <span class={`kanban-card-kind${item.isPullRequest ? " is-pr" : " is-issue"}`}>
+                                            {item.isPullRequest ? "Pull request" : "Issue"}
+                                          </span>
+                                          <span class="kanban-card-number">#{item.number}</span>
+                                        </div>
+
+                                        <a class="kanban-card-title" href={item.htmlUrl} target="_blank" rel="noreferrer">
+                                          {item.title}
+                                        </a>
+
+                                        <p class="kanban-card-meta">
+                                          <span>{formatUpdatedAt(item.updatedAt)}</span>
+                                          <Show when={item.assignees.length > 0}>
+                                            <span>{formatIssueCountLabel(item.assignees.length)}</span>
+                                          </Show>
+                                          <Show when={item.draft}>
+                                            <span>Draft</span>
+                                          </Show>
+                                        </p>
+                                      </article>
+                                    )}
+                                  </For>
+                                </Show>
+                              </div>
+                            </section>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </Show>
+                </Show>
+              </Show>
+            </div>
+          </div>
         </div>
+
         <Show when={isChatOpen()}>
           <>
             <button

@@ -7,6 +7,8 @@ use tauri::State;
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const VIEWER_URL: &str = "https://api.github.com/user";
+const REPOSITORIES_URL: &str = "https://api.github.com/user/repos";
+const REPOSITORY_ISSUES_BASE_URL: &str = "https://api.github.com/repos";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const USER_AGENT: &str = "hostlocal-github-auth";
 const GITHUB_CLIENT_ID: &str = "Ov23liFYf8FT68KkI3jg";
@@ -41,6 +43,36 @@ pub struct GithubUser {
     pub avatar_url: String,
     #[serde(rename(serialize = "htmlUrl", deserialize = "html_url"))]
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GithubRepository {
+    pub id: i64,
+    pub name: String,
+    #[serde(rename(serialize = "fullName", deserialize = "full_name"))]
+    pub full_name: String,
+    #[serde(rename(serialize = "htmlUrl", deserialize = "html_url"))]
+    pub html_url: String,
+    #[serde(rename(serialize = "isPrivate", deserialize = "private"))]
+    pub is_private: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepositoryItem {
+    pub id: i64,
+    pub number: i64,
+    pub title: String,
+    pub html_url: String,
+    pub state: String,
+    pub is_pull_request: bool,
+    pub draft: bool,
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+    pub author_login: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,6 +115,39 @@ struct AccessTokenSuccessResponse {
 #[derive(Debug, Deserialize)]
 struct AccessTokenErrorResponse {
     error: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubIssuePullRequestMarker {}
+
+#[derive(Debug, Deserialize)]
+struct GithubRepositoryIssueLabel {
+    name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubRepositoryIssueUser {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRepositoryIssueItem {
+    id: i64,
+    number: i64,
+    title: String,
+    html_url: String,
+    state: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    labels: Vec<GithubRepositoryIssueLabel>,
+    #[serde(default)]
+    assignees: Vec<GithubRepositoryIssueUser>,
+    #[serde(default)]
+    user: Option<GithubRepositoryIssueUser>,
+    updated_at: String,
+    #[serde(default)]
+    pull_request: Option<GithubIssuePullRequestMarker>,
 }
 
 pub fn github_client_id() -> Result<String, String> {
@@ -165,6 +230,122 @@ async fn fetch_viewer(token: &str) -> Result<GithubUser, String> {
         .map_err(|e| e.to_string())
 }
 
+async fn fetch_repositories(token: &str) -> Result<Vec<GithubRepository>, String> {
+    let client = github_http_client()?;
+    let mut repositories: Vec<GithubRepository> = Vec::new();
+    let mut page: u32 = 1;
+
+    loop {
+        let url = format!("{REPOSITORIES_URL}?sort=updated&per_page=100&page={page}");
+        let response = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_http_error(status, body));
+        }
+
+        let batch = response
+            .json::<Vec<GithubRepository>>()
+            .await
+            .map_err(|e| e.to_string())?;
+        let batch_len = batch.len();
+        if batch_len == 0 {
+            break;
+        }
+        repositories.extend(batch);
+        if batch_len < 100 {
+            break;
+        }
+
+        page += 1;
+    }
+
+    Ok(repositories)
+}
+
+async fn fetch_repository_items(
+    token: &str,
+    repository_full_name: &str,
+) -> Result<Vec<GithubRepositoryItem>, String> {
+    let repository_full_name = repository_full_name.trim();
+    if repository_full_name.is_empty() {
+        return Err("Repository name is required.".to_string());
+    }
+
+    if !repository_full_name.contains('/') {
+        return Err("Repository name must be in owner/repository format.".to_string());
+    }
+
+    let client = github_http_client()?;
+    let mut items: Vec<GithubRepositoryItem> = Vec::new();
+    let mut page: u32 = 1;
+
+    loop {
+        let url = format!(
+            "{REPOSITORY_ISSUES_BASE_URL}/{repository_full_name}/issues?state=all&sort=updated&direction=desc&per_page=100&page={page}"
+        );
+        let response = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_http_error(status, body));
+        }
+
+        let batch = response
+            .json::<Vec<GithubRepositoryIssueItem>>()
+            .await
+            .map_err(|e| e.to_string())?;
+        let batch_len = batch.len();
+        if batch_len == 0 {
+            break;
+        }
+
+        items.extend(batch.into_iter().map(|item| {
+            GithubRepositoryItem {
+                id: item.id,
+                number: item.number,
+                title: item.title,
+                html_url: item.html_url,
+                state: item.state,
+                is_pull_request: item.pull_request.is_some(),
+                draft: item.draft,
+                labels: item.labels.into_iter().map(|label| label.name).collect(),
+                assignees: item
+                    .assignees
+                    .into_iter()
+                    .map(|assignee| assignee.login)
+                    .collect(),
+                author_login: item.user.map(|user| user.login),
+                updated_at: item.updated_at,
+            }
+        }));
+
+        if batch_len < 100 {
+            break;
+        }
+
+        page += 1;
+    }
+
+    Ok(items)
+}
+
 #[tauri::command]
 pub async fn github_auth_status(
     state: State<'_, GithubAuthState>,
@@ -227,6 +408,109 @@ pub async fn github_auth_status(
 }
 
 #[tauri::command]
+pub async fn github_list_repositories(
+    state: State<'_, GithubAuthState>,
+) -> Result<Vec<GithubRepository>, String> {
+    let session_token = {
+        let session = state
+            .session
+            .lock()
+            .map_err(|_| "Failed to access auth state".to_string())?;
+        session.access_token.clone()
+    };
+
+    let token = if let Some(token) = session_token {
+        token
+    } else {
+        match read_persisted_token() {
+            Ok(Some(token)) => token,
+            Ok(None) => return Err("Connect GitHub to load repositories.".to_string()),
+            Err(error) => {
+                eprintln!("Failed to read GitHub token from keyring: {error}");
+                return Err("Connect GitHub to load repositories.".to_string());
+            }
+        }
+    };
+
+    match fetch_repositories(&token).await {
+        Ok(repositories) => {
+            let mut session = state
+                .session
+                .lock()
+                .map_err(|_| "Failed to access auth state".to_string())?;
+            session.access_token = Some(token);
+            Ok(repositories)
+        }
+        Err(error) => {
+            if error.contains("status 401") {
+                let _ = clear_persisted_token();
+                let mut session = state
+                    .session
+                    .lock()
+                    .map_err(|_| "Failed to access auth state".to_string())?;
+                session.access_token = None;
+                session.user = None;
+                session.pending = None;
+                return Err("GitHub session expired. Connect again.".to_string());
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn github_list_repository_items(
+    state: State<'_, GithubAuthState>,
+    repository_full_name: String,
+) -> Result<Vec<GithubRepositoryItem>, String> {
+    let session_token = {
+        let session = state
+            .session
+            .lock()
+            .map_err(|_| "Failed to access auth state".to_string())?;
+        session.access_token.clone()
+    };
+
+    let token = if let Some(token) = session_token {
+        token
+    } else {
+        match read_persisted_token() {
+            Ok(Some(token)) => token,
+            Ok(None) => return Err("Connect GitHub to load repository items.".to_string()),
+            Err(error) => {
+                eprintln!("Failed to read GitHub token from keyring: {error}");
+                return Err("Connect GitHub to load repository items.".to_string());
+            }
+        }
+    };
+
+    match fetch_repository_items(&token, &repository_full_name).await {
+        Ok(items) => {
+            let mut session = state
+                .session
+                .lock()
+                .map_err(|_| "Failed to access auth state".to_string())?;
+            session.access_token = Some(token);
+            Ok(items)
+        }
+        Err(error) => {
+            if error.contains("status 401") {
+                let _ = clear_persisted_token();
+                let mut session = state
+                    .session
+                    .lock()
+                    .map_err(|_| "Failed to access auth state".to_string())?;
+                session.access_token = None;
+                session.user = None;
+                session.pending = None;
+                return Err("GitHub session expired. Connect again.".to_string());
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub fn github_auth_logout(state: State<'_, GithubAuthState>) -> Result<(), String> {
     let mut session = state
         .session
@@ -269,7 +553,7 @@ pub async fn github_auth_start(
         .header("Accept", "application/json")
         .form(&[
             ("client_id", client_id.as_str()),
-            ("scope", "read:user user:email"),
+            ("scope", "read:user user:email repo"),
         ])
         .send()
         .await

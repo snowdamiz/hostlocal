@@ -48,6 +48,8 @@ pub fn run() {
             commands::sqlite_create_project,
             commands::pick_development_folder,
             github_auth::github_auth_status,
+            github_auth::github_list_repositories,
+            github_auth::github_list_repository_items,
             github_auth::github_auth_start,
             github_auth::github_auth_poll,
             github_auth::github_auth_logout,
