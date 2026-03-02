@@ -1402,27 +1402,6 @@ export function MainLayout() {
                     </Show>
                   </section>
 
-                  <section class="sidebar-issue-section">
-                    <p class="sidebar-issue-section-title">Assignees</p>
-                    <Show
-                      when={item.assignees.length > 0}
-                      fallback={<p class="sidebar-issue-inline-empty">Unassigned</p>}
-                    >
-                      <div class="sidebar-issue-inline-list">
-                        <For each={item.assignees}>{(assignee) => <span class="sidebar-issue-pill">@{assignee}</span>}</For>
-                      </div>
-                    </Show>
-                  </section>
-
-                  <section class="sidebar-issue-section">
-                    <p class="sidebar-issue-section-title">Labels</p>
-                    <Show when={item.labels.length > 0} fallback={<p class="sidebar-issue-inline-empty">No labels</p>}>
-                      <div class="sidebar-issue-inline-list">
-                        <For each={item.labels}>{(label) => <span class="sidebar-issue-pill">{label}</span>}</For>
-                      </div>
-                    </Show>
-                  </section>
-
                   <div class="sidebar-issue-actions">
                     <a
                       class="sidebar-issue-link"

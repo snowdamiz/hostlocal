@@ -25,6 +25,7 @@ html {
   --syntax-attribute: var(--text-secondary);
   --syntax-literal: var(--text-primary);
   --syntax-operator: var(--text-secondary);
+  --sidebar-shadow-dark: rgba(6, 9, 15, 0.1);
   --sidebar-left-width: clamp(220px, 22vw, 320px);
   --sidebar-right-width: clamp(260px, 25vw, 380px);
   --sidebar-panel-transition: 220ms;
@@ -406,10 +407,13 @@ html[data-platform="non-macos"] .window-control-maximize::before {
 }
 
 .sidebar-left {
+  position: relative;
+  z-index: 40;
   margin: 0;
   border-radius: 0;
   border: 1px solid var(--surface-border);
   background: var(--surface);
+  box-shadow: 8px 0 18px var(--sidebar-shadow-dark);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -724,6 +728,8 @@ html[data-platform="non-macos"] .window-control-maximize::before {
 }
 
 .sidebar-right {
+  position: relative;
+  z-index: 110;
   margin: 0;
   border: 0;
   background: var(--surface);
@@ -742,20 +748,20 @@ html[data-platform="non-macos"] .window-control-maximize::before {
 
 .layout.is-issue-panel-open .sidebar-right {
   border: 1px solid var(--surface-border);
+  box-shadow: -8px 0 18px var(--sidebar-shadow-dark);
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
 }
 
 .sidebar-issue-header {
-  padding: 12px;
+  padding: 18px;
   border-bottom: 1px solid var(--surface-border);
   display: flex;
   align-items: flex-start;
   gap: 10px;
   position: relative;
   z-index: 130;
-  margin-top: 4px;
 }
 
 .sidebar-issue-header-copy {
@@ -846,23 +852,6 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-}
-
-.sidebar-issue-inline-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.sidebar-issue-pill {
-  border-radius: 999px;
-  border: 1px solid var(--surface-border);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 11px;
-  line-height: 1.25;
-  padding: 3px 8px;
-  word-break: break-word;
 }
 
 .sidebar-issue-inline-empty {
@@ -1320,7 +1309,7 @@ html[data-platform="non-macos"] .window-control-maximize::before {
   margin: 0;
   border: 1px solid var(--surface-border);
   border-radius: 10px;
-  background: var(--app-bg);
+  background: var(--surface-dark);
   color: var(--text-primary);
   padding: 10px;
   display: flex;
@@ -1563,6 +1552,6 @@ html[data-platform="non-macos"] .window-control-maximize::before {
     width: min(88vw, var(--sidebar-right-width));
     transform: translateX(100%);
     z-index: 130;
-    box-shadow: -12px 0 30px var(--app-grid-line);
+    box-shadow: -12px 0 30px var(--sidebar-shadow-dark);
   }
 }
