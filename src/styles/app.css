@@ -72,3 +72,85 @@ body {
   font-family: var(--font-sans);
   overflow: hidden;
 }
+
+@layer components {
+  html[data-platform="macos"] .window-controls:hover .window-control-close {
+    background-color: var(--color-platform-close);
+    border-color: var(--color-platform-close-border);
+  }
+
+  html[data-platform="macos"] .window-controls:hover .window-control-minimize {
+    background-color: var(--color-platform-minimize);
+    border-color: var(--color-platform-minimize-border);
+  }
+
+  html[data-platform="macos"] .window-controls:hover .window-control-maximize {
+    background-color: var(--color-platform-maximize);
+    border-color: var(--color-platform-maximize-border);
+  }
+
+  html[data-platform="non-macos"] .window-control-close:hover {
+    background-color: var(--color-platform-close-hover);
+    color: var(--color-platform-close-ink);
+  }
+
+  html[data-platform="non-macos"] .window-control-close::before {
+    content: "✕";
+  }
+
+  html[data-platform="non-macos"] .window-control-minimize::before {
+    content: "−";
+  }
+
+  html[data-platform="non-macos"] .window-control-maximize::before {
+    content: "□";
+  }
+
+  .hljs-comment,
+  .hljs-quote {
+    color: var(--color-syntax-comment);
+  }
+
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-built_in,
+  .hljs-name,
+  .hljs-title.class_,
+  .hljs-title.function_ {
+    color: var(--color-syntax-keyword);
+  }
+
+  .hljs-string,
+  .hljs-title,
+  .hljs-section,
+  .hljs-attribute {
+    color: var(--color-syntax-string);
+  }
+
+  .hljs-number,
+  .hljs-literal,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: var(--color-syntax-number);
+  }
+
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-attr {
+    color: var(--color-syntax-attribute);
+  }
+
+  .hljs-meta,
+  .hljs-operator,
+  .hljs-punctuation {
+    color: var(--color-syntax-operator);
+  }
+
+  .hljs-emphasis {
+    font-style: italic;
+  }
+
+  .hljs-strong {
+    font-weight: 700;
+  }
+}
