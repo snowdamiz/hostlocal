@@ -1014,74 +1014,43 @@ export function MainLayout() {
   });
 
   return (
-    <div
-      class="relative flex h-full w-full overflow-hidden bg-surface-canvas text-text-strong"
-      classList={{
-        "is-issue-panel-open": selectedBoardItem() !== null,
-      }}
-    >
-      <aside class="flex h-full w-[var(--sidebar-left-width)] shrink-0 flex-col border-r border-border-strong bg-surface-panel/95">
-        <div class="min-h-0 flex-1 overflow-hidden p-4">
-          <div class="flex h-full flex-col gap-3 overflow-y-auto pr-1">
+    <div class={`layout${selectedBoardItem() ? " is-issue-panel-open" : ""}`}>
+      <aside class="sidebar-left">
+        <div class="sidebar-repositories-panel">
+          <div class="sidebar-repositories">
             <Show when={repositoryListError()}>
               {(error) => (
-                <p class="rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-status-danger-border bg-status-danger-surface px-3 py-2 text-[11px] text-status-danger-ink" role="alert">
+                <p class="sidebar-repositories-error" role="alert">
                   {error()}
                 </p>
               )}
             </Show>
-            <Show
-              when={githubUser()}
-              fallback={<p class="px-1 text-[11px] text-text-muted">Connect GitHub to see your repositories.</p>}
-            >
+            <Show when={githubUser()} fallback={<p class="sidebar-repositories-empty">Connect GitHub to see your repositories.</p>}>
               <Show
                 when={!isRepositoryListLoading()}
-                fallback={<p class="px-1 text-[11px] text-text-muted">Loading repositories...</p>}
+                fallback={<p class="sidebar-repositories-empty">Loading repositories...</p>}
               >
                 <Show
                   when={repositories().length > 0}
-                  fallback={<p class="px-1 text-[11px] text-text-muted">No repositories found.</p>}
+                  fallback={<p class="sidebar-repositories-empty">No repositories found.</p>}
                 >
                   <For each={repositories()}>
                     {(repository) => (
                       <button
                         type="button"
-                        class="group flex w-full items-center gap-3 rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-transparent px-3 py-2 text-left transition-colors hover:border-border-strong/70 hover:bg-surface-elevated/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
-                        classList={{
-                          "border-border-strong bg-surface-elevated/65": selectedRepositoryId() === repository.id,
-                        }}
+                        class={`sidebar-repository-item${selectedRepositoryId() === repository.id ? " is-selected" : ""}`}
                         title={repository.fullName}
                         onClick={() => setSelectedRepositoryId(repository.id)}
                       >
-                        <svg
-                          class="h-4 w-4 shrink-0 text-text-muted transition-colors group-hover:text-text-body"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M5 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4v-5h6v5h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5Z"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linejoin="round"
-                          />
-                          <path
-                            d="M9 20v-5h6v5"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M5 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4v-5h6v5h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5Z" />
+                          <path d="M9 20v-5h6v5" />
                         </svg>
-                        <p class="min-w-0 flex-1">
-                          <span class="block truncate text-[12px] font-medium text-text-strong">{repository.name}</span>
+                        <p class="sidebar-repository-label">
+                          <span class="sidebar-repository-name">{repository.name}</span>
                         </p>
                         <span
-                          class="inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]"
-                          classList={{
-                            "border-status-danger-border text-status-danger-ink": repository.isPrivate,
-                            "border-border-strong text-text-muted": !repository.isPrivate,
-                          }}
+                          class={`sidebar-repository-visibility${repository.isPrivate ? " is-private" : ""}`}
                         >
                           {repository.isPrivate ? "Private" : "Public"}
                         </span>
@@ -1094,10 +1063,10 @@ export function MainLayout() {
           </div>
         </div>
 
-        <div class="border-t border-border-strong px-4 py-3">
+        <div class="sidebar-footer">
           <Show when={authError()}>
             {(error) => (
-              <p class="mb-3 rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-status-danger-border bg-status-danger-surface px-3 py-2 text-[11px] text-status-danger-ink" role="alert">
+              <p class="sidebar-auth-error" role="alert">
                 {error()}
               </p>
             )}
@@ -1105,24 +1074,20 @@ export function MainLayout() {
 
           <Show when={deviceFlow()}>
             {(flow) => (
-              <div class="mb-3 rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-border-strong bg-surface-canvas/45 p-3">
-                <p class="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">Confirm on GitHub</p>
+              <div class="sidebar-device-flow">
+                <p class="sidebar-device-title">Confirm on GitHub</p>
                 <button
                   type="button"
-                  class="mt-2 w-full rounded-[calc(var(--radius-app-shell)-0.35rem)] border border-border-strong bg-surface-panel/80 px-3 py-1.5 text-[11px] text-text-body transition-colors hover:bg-surface-elevated/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+                  class="sidebar-device-link"
                   onClick={() => void openVerificationPage()}
                 >
                   Open verification page
                 </button>
-                <button
-                  type="button"
-                  class="mt-2 flex w-full items-center justify-between rounded-[calc(var(--radius-app-shell)-0.35rem)] border border-border-strong bg-surface-canvas/80 px-3 py-1.5 text-[11px] font-medium tracking-[0.08em] text-text-strong transition-colors hover:bg-surface-elevated/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
-                  onClick={() => void copyUserCode()}
-                >
+                <button type="button" class="sidebar-device-code" onClick={() => void copyUserCode()}>
                   <span>{flow().userCode}</span>
-                  <span class="text-text-muted">{isCodeCopied() ? "Copied" : "Copy"}</span>
+                  <span>{isCodeCopied() ? "Copied" : "Copy"}</span>
                 </button>
-                <p class="mt-2 text-[10px] text-text-muted">
+                <p class="sidebar-device-hint">
                   {isPollingAuth() ? "Checking authorization..." : "Waiting for approval..."}
                 </p>
               </div>
@@ -1134,7 +1099,7 @@ export function MainLayout() {
             fallback={
               <button
                 type="button"
-                class="w-full rounded-[calc(var(--radius-app-shell)-0.25rem)] border border-border-strong bg-surface-elevated/75 px-3 py-2 text-[11px] font-medium text-text-strong transition-colors hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45 disabled:cursor-not-allowed disabled:opacity-55"
+                class="sidebar-connect-link"
                 onClick={() => void connectGithub()}
                 disabled={isAuthChecking() || isAuthStarting()}
               >
@@ -1143,15 +1108,15 @@ export function MainLayout() {
             }
           >
             {(user) => (
-              <div class="flex items-center gap-2.5">
+              <div class="sidebar-github-user">
                 <img
-                  class="h-8 w-8 rounded-full border border-border-strong object-cover"
+                  class="sidebar-github-avatar"
                   src={user().avatarUrl}
                   alt={`${user().login} profile`}
                   loading="lazy"
                 />
                 <a
-                  class="min-w-0 flex-1 truncate text-[11px] font-medium text-text-body transition-colors hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+                  class="sidebar-github-login"
                   href={user().htmlUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -1161,28 +1126,16 @@ export function MainLayout() {
                 </a>
                 <button
                   type="button"
-                  class="grid h-8 w-8 place-items-center rounded-[calc(var(--radius-app-shell)-0.35rem)] border border-border-strong bg-surface-canvas/60 text-text-muted transition-colors hover:bg-surface-elevated/70 hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45 disabled:cursor-not-allowed disabled:opacity-55"
+                  class="sidebar-signout-btn"
                   onClick={() => void signOutGithub()}
                   aria-label="Sign out of GitHub"
                   title="Sign out"
                   disabled={isSigningOut()}
                 >
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M14 7V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path d="M10 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                    <path
-                      d="m17 8 4 4-4 4"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M14 7V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3" />
+                    <path d="M10 12h10" />
+                    <path d="m17 8 4 4-4 4" />
                   </svg>
                 </button>
               </div>
@@ -1191,24 +1144,22 @@ export function MainLayout() {
         </div>
       </aside>
 
-      <section class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-surface-canvas">
-        <header class="flex h-[calc(var(--drag-region-height)+0.375rem)] items-end justify-between border-b border-border-strong px-4 pb-2">
-          <h2 class="truncate text-[13px] font-semibold text-text-strong">
-            {selectedRepository()?.fullName ?? "GitHub repositories"}
-          </h2>
+      <section class="content">
+        <header class="content-heading">
+          <h2>{selectedRepository()?.fullName ?? "GitHub repositories"}</h2>
           <button
             type="button"
-            class="grid h-8 w-8 place-items-center rounded-[calc(var(--radius-app-shell)-0.35rem)] border border-border-strong bg-surface-panel/80 text-text-muted transition-colors hover:bg-surface-elevated/75 hover:text-text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+            class="content-board-refresh-btn"
             aria-label="Reset canvas view"
             title="Reset canvas view"
             onClick={resetCanvasView}
           >
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 4v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M4 12h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M16 12h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <circle cx="12" cy="12" r="3.5" stroke="currentColor" stroke-width="1.8" />
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 4v4" />
+              <path d="M12 16v4" />
+              <path d="M4 12h4" />
+              <path d="M16 12h4" />
+              <circle cx="12" cy="12" r="3.5" />
             </svg>
           </button>
         </header>
@@ -1217,11 +1168,7 @@ export function MainLayout() {
           ref={(element) => {
             canvasViewportRef = element;
           }}
-          class="relative min-h-0 flex-1 overflow-hidden [touch-action:none]"
-          classList={{
-            "cursor-grabbing": isCanvasPanning(),
-            "cursor-grab": !isCanvasPanning(),
-          }}
+          class={`content-canvas-viewport${isCanvasPanning() ? " is-panning" : ""}`}
           onPointerDown={beginCanvasPan}
           onPointerMove={moveCanvasPan}
           onPointerUp={endCanvasPan}
@@ -1233,12 +1180,12 @@ export function MainLayout() {
             ref={(element) => {
               canvasGridRef = element;
             }}
-            class="pointer-events-none absolute inset-0 h-full w-full"
+            class="content-canvas-grid"
             aria-label="Interactive canvas background"
             role="img"
           />
-          <div class="absolute inset-0 overflow-hidden">
-            <div class="relative h-full w-full [transform-origin:0_0] will-change-transform" style={boardCameraStyle()}>
+          <div class="content-canvas-layer">
+            <div class="content-canvas-world" style={boardCameraStyle()}>
               <Show when={selectedRepository()} fallback={<p class="kanban-state">Select a repository to open its board.</p>}>
                 <Show when={!isRepositoryItemsLoading()} fallback={<p class="kanban-state">Loading board items...</p>}>
                   <Show
@@ -1338,29 +1285,7 @@ export function MainLayout() {
 
       </section>
 
-      <Show when={selectedBoardItem()}>
-        <button
-          type="button"
-          class="absolute inset-0 z-20 bg-surface-canvas/55 lg:hidden"
-          aria-label="Close issue details overlay"
-          onClick={closeIssuePanel}
-        />
-      </Show>
-
-      <aside
-        class="absolute inset-y-0 right-0 z-30 flex max-w-full flex-col bg-surface-panel/98 transition-[transform,width,opacity,border-color] ease-out lg:relative lg:inset-y-auto lg:right-auto lg:z-0 lg:translate-x-0"
-        classList={{
-          "w-[min(100%,var(--sidebar-right-width))] translate-x-0 border-l border-border-strong opacity-100 shadow-2xl lg:w-[var(--sidebar-right-width)] lg:shadow-none":
-            selectedBoardItem() !== null,
-          "w-[min(100%,var(--sidebar-right-width))] translate-x-full border-l border-transparent opacity-0 pointer-events-none lg:w-0 lg:translate-x-0 lg:opacity-100 lg:shadow-none":
-            selectedBoardItem() === null,
-        }}
-        style={{
-          "transition-duration": "var(--sidebar-panel-transition)",
-        }}
-        aria-label="Selected issue details"
-        aria-hidden={!selectedBoardItem()}
-      >
+      <aside class="sidebar-right" aria-label="Selected issue details" aria-hidden={!selectedBoardItem()}>
         <Show when={selectedBoardItem()} keyed>
           {(item) => {
             return (
