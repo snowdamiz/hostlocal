@@ -335,7 +335,6 @@ export function MainLayout() {
     zoom: CANVAS_DEFAULT_ZOOM,
   });
   const [isCanvasPanning, setIsCanvasPanning] = createSignal(false);
-  const [isChatOpen, setIsChatOpen] = createSignal(false);
   const [selectedBoardItemId, setSelectedBoardItemId] = createSignal<number | null>(null);
 
   let pollTimeoutId: number | null = null;
@@ -1284,53 +1283,6 @@ export function MainLayout() {
           </div>
         </div>
 
-        <Show when={isChatOpen()}>
-          <>
-            <button
-              type="button"
-              class="content-chat-backdrop"
-              aria-label="Close chat"
-              onClick={() => setIsChatOpen(false)}
-            />
-            <section id="chat-panel" class="content-chat-panel" aria-label="Chat panel">
-              <form class="content-chat-composer" onSubmit={(event) => event.preventDefault()}>
-                <label class="content-chat-composer-label" for="chat-message-input">
-                  Message
-                </label>
-                <input
-                  id="chat-message-input"
-                  class="content-chat-composer-input"
-                  type="text"
-                  placeholder="Type a message..."
-                  autocomplete="off"
-                />
-                <button type="submit" class="content-chat-composer-send" aria-label="Send message" title="Send">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M3 11.5 20.5 4.5 13.5 22l-2.25-7.75L3 11.5Z" />
-                    <path d="m11.25 14.25 9.25-9.75" />
-                  </svg>
-                </button>
-              </form>
-            </section>
-          </>
-        </Show>
-        <Show when={!isChatOpen()}>
-          <button
-            type="button"
-            class="app-chat-fab"
-            aria-label="Open chat"
-            title="Open chat"
-            aria-expanded={isChatOpen()}
-            aria-controls="chat-panel"
-            onClick={() => setIsChatOpen(true)}
-          >
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M8 10h8" />
-              <path d="M8 14h5" />
-              <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.3 0-2.52-.3-3.62-.8L3 21l1.9-5.2a8.45 8.45 0 0 1-.9-3.8A8.5 8.5 0 1 1 21 11.5Z" />
-            </svg>
-          </button>
-        </Show>
       </section>
 
       <aside class="sidebar-right" aria-label="Selected issue details" aria-hidden={!selectedBoardItem()}>
@@ -1418,21 +1370,6 @@ export function MainLayout() {
                       </svg>
                       <span>Open on GitHub</span>
                     </a>
-                    <button
-                      type="button"
-                      class="sidebar-issue-agent-btn"
-                      aria-label="Open agent"
-                      title="Open agent"
-                      onClick={() => setIsChatOpen(true)}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path d="M12 2v3" />
-                        <rect x="5" y="7" width="14" height="11" rx="3" />
-                        <path d="M9 12h.01" />
-                        <path d="M15 12h.01" />
-                        <path d="M8 17v2h8v-2" />
-                      </svg>
-                    </button>
                   </div>
                 </div>
               </>
