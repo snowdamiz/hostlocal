@@ -407,7 +407,7 @@ export function MainLayout() {
       return true;
     }
 
-    return !target.closest("a,button,input,textarea,select,label,[draggable='true'],[data-board-card='true']");
+    return !target.closest("a,button,input,textarea,select,label,[draggable='true'],.kanban-card");
   };
 
   const getCanvasTokenColor = (tokenName: string, fallbackTokenName: string) => {
@@ -1239,35 +1239,17 @@ export function MainLayout() {
           />
           <div class="absolute inset-0 overflow-hidden">
             <div class="relative h-full w-full [transform-origin:0_0] will-change-transform" style={boardCameraStyle()}>
-              <Show
-                when={selectedRepository()}
-                fallback={
-                  <p class="mx-[var(--content-overlay-inset)] mt-[var(--content-overlay-top-inset)] rounded-[calc(var(--radius-app-shell)-0.2rem)] border border-border-strong bg-surface-panel/85 px-4 py-3 text-[12px] text-text-muted shadow-sm">
-                    Select a repository to open its board.
-                  </p>
-                }
-              >
-                <Show
-                  when={!isRepositoryItemsLoading()}
-                  fallback={
-                    <p class="mx-[var(--content-overlay-inset)] mt-[var(--content-overlay-top-inset)] rounded-[calc(var(--radius-app-shell)-0.2rem)] border border-border-strong bg-surface-panel/85 px-4 py-3 text-[12px] text-text-muted shadow-sm">
-                      Loading board items...
-                    </p>
-                  }
-                >
+              <Show when={selectedRepository()} fallback={<p class="kanban-state">Select a repository to open its board.</p>}>
+                <Show when={!isRepositoryItemsLoading()} fallback={<p class="kanban-state">Loading board items...</p>}>
                   <Show
                     when={!repositoryItemsError()}
                     fallback={
-                      <p class="mx-[var(--content-overlay-inset)] mt-[var(--content-overlay-top-inset)] rounded-[calc(var(--radius-app-shell)-0.2rem)] border border-status-danger-border bg-status-danger-surface px-4 py-3 text-[12px] text-status-danger-ink shadow-sm" role="alert">
+                      <p class="kanban-state kanban-state-error" role="alert">
                         {repositoryItemsError() ?? "Unable to load board items."}
                       </p>
                     }
                   >
-                    <div
-                      class="flex min-h-full min-w-max items-start gap-4 pr-[var(--content-overlay-inset)] pb-[var(--content-overlay-inset)] pl-[var(--content-overlay-inset)] pt-[var(--content-overlay-top-inset)]"
-                      role="list"
-                      aria-label="Repository work board"
-                    >
+                    <div class="kanban-board" role="list" aria-label="Repository work board">
                       <For each={KANBAN_COLUMNS}>
                         {(column) => {
                           const columnItems = () => groupedItemsByColumn()[column.key];
@@ -1278,43 +1260,26 @@ export function MainLayout() {
 
                           return (
                             <section
-                              class="flex w-[18.5rem] shrink-0 flex-col gap-3 rounded-[var(--radius-app-shell)] border border-border-strong bg-surface-panel/88 p-3 backdrop-blur-[1px] transition-colors"
-                              classList={{
-                                "border-text-body/60 bg-surface-elevated/82 ring-2 ring-text-body/40":
-                                  dragOverColumn() === column.key,
-                              }}
+                              class={`kanban-column${dragOverColumn() === column.key ? " is-drop-target" : ""}`}
                               role="listitem"
                               aria-label={`${column.title} column`}
                               onDragOver={(event) => handleColumnDragOver(event, column.key)}
                               onDragLeave={(event) => handleColumnDragLeave(event, column.key)}
                               onDrop={(event) => handleColumnDrop(event, column.key)}
                             >
-                              <header class="flex items-start justify-between gap-3 border-b border-border-strong/75 pb-2">
+                              <header class="kanban-column-header">
                                 <div>
-                                  <p class="text-[12px] font-semibold text-text-strong">{column.title}</p>
-                                  <p class="mt-0.5 text-[10px] uppercase tracking-[0.08em] text-text-muted">
-                                    {column.description}
-                                  </p>
+                                  <p class="kanban-column-title">{column.title}</p>
+                                  <p class="kanban-column-description">{column.description}</p>
                                 </div>
-                                <span class="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-border-strong bg-surface-canvas/65 px-2 text-[10px] font-semibold text-text-body">
-                                  {columnItems().length}
-                                </span>
+                                <span class="kanban-column-count">{columnItems().length}</span>
                               </header>
-                              <div class="flex flex-1 flex-col gap-2">
-                                <Show
-                                  when={columnItems().length > 0}
-                                  fallback={<p class="py-4 text-center text-[11px] text-text-muted">No items</p>}
-                                >
+                              <div class="kanban-column-cards">
+                                <Show when={columnItems().length > 0} fallback={<p class="kanban-column-empty">No items</p>}>
                                   <For each={visibleColumnItems()}>
                                     {(item) => (
                                       <article
-                                        class="group flex cursor-pointer flex-col gap-2 rounded-[calc(var(--radius-app-shell)-0.2rem)] border border-border-strong bg-surface-canvas/75 p-3 transition-[border-color,background-color,transform,opacity] hover:border-text-body/45 hover:bg-surface-elevated/65"
-                                        classList={{
-                                          "opacity-50": draggingItemId() === item.id,
-                                          "border-text-body/65 bg-surface-elevated/82 ring-1 ring-text-body/45":
-                                            selectedBoardItemId() === item.id,
-                                        }}
-                                        data-board-card="true"
+                                        class={`kanban-card${draggingItemId() === item.id ? " is-dragging" : ""}${selectedBoardItemId() === item.id ? " is-selected" : ""}`}
                                         draggable
                                         onPointerDown={(event) => {
                                           if (event.button === 0) {
@@ -1325,24 +1290,18 @@ export function MainLayout() {
                                         onDragStart={(event) => handleCardDragStart(event, item.id)}
                                         onDragEnd={handleCardDragEnd}
                                       >
-                                        <div class="flex items-center justify-between gap-2">
-                                          <span
-                                            class="inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]"
-                                            classList={{
-                                              "border-text-body/55 text-text-body": item.isPullRequest,
-                                              "border-border-strong text-text-muted": !item.isPullRequest,
-                                            }}
-                                          >
+                                        <div class="kanban-card-top">
+                                          <span class={`kanban-card-kind${item.isPullRequest ? " is-pr" : " is-issue"}`}>
                                             {item.isPullRequest ? "Pull request" : "Issue"}
                                           </span>
-                                          <span class="text-[10px] font-medium text-text-muted">#{item.number}</span>
+                                          <span class="kanban-card-number">#{item.number}</span>
                                         </div>
 
-                                        <p class="line-clamp-3 text-[12px] font-medium leading-relaxed text-text-strong">
+                                        <p class="kanban-card-title">
                                           {item.title}
                                         </p>
 
-                                        <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted">
+                                        <p class="kanban-card-meta">
                                           <span>{formatUpdatedAt(item.updatedAt)}</span>
                                           <Show when={item.assignees.length > 0}>
                                             <span>{formatIssueCountLabel(item.assignees.length)}</span>
@@ -1358,7 +1317,7 @@ export function MainLayout() {
                                 <Show when={hasMoreColumnItems()}>
                                   <button
                                     type="button"
-                                    class="mt-1 rounded-[calc(var(--radius-app-shell)-0.3rem)] border border-border-strong bg-surface-canvas/65 px-3 py-1.5 text-[11px] font-medium text-text-body transition-colors hover:bg-surface-elevated/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-body/45"
+                                    class="kanban-column-load-more"
                                     onClick={() => loadMoreColumnCards(column.key)}
                                   >
                                     Load more
