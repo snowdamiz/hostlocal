@@ -36,6 +36,13 @@ const formatRuntimeTimestamp = (value: string | null | undefined) => {
   });
 };
 
+const formatStatusLabel = (value: string) =>
+  value
+    .split("-")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`)
+    .join(" ");
+
 export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
   return (
     <aside
@@ -121,6 +128,106 @@ export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
                         </div>
                       );
                     }}
+                  </Show>
+                </section>
+
+                <section class="flex flex-col gap-1.5 border-b border-[var(--surface-border)] pb-[10px]">
+                  <p class="m-0 text-[10.5px] font-bold uppercase tracking-[0.05em] text-[var(--text-secondary)]">Live runtime activity</p>
+                  <Show
+                    when={props.selectedBoardRuntimeTelemetry().length > 0}
+                    fallback={
+                      <p class="m-0 text-[11.5px] leading-[1.35] text-[var(--text-muted)]">
+                        No runtime telemetry yet.
+                      </p>
+                    }
+                  >
+                    <ol class="m-0 flex list-none flex-col gap-2 p-0">
+                      <For each={props.selectedBoardRuntimeTelemetry()}>
+                        {(event) => (
+                          <li class="rounded-[8px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                {event.stage}
+                              </span>
+                              <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] text-[var(--text-secondary)]">
+                                {event.kind}
+                              </span>
+                              <span class="text-[10.5px] text-[var(--text-muted)]">
+                                {formatRuntimeTimestamp(event.createdAt)}
+                              </span>
+                            </div>
+                            <p class="m-0 mt-1.5 break-words text-[11.5px] leading-[1.4] text-[var(--text-primary)]">
+                              {event.message}
+                            </p>
+                          </li>
+                        )}
+                      </For>
+                    </ol>
+                  </Show>
+                </section>
+
+                <section class="flex flex-col gap-1.5 border-b border-[var(--surface-border)] pb-[10px]">
+                  <p class="m-0 text-[10.5px] font-bold uppercase tracking-[0.05em] text-[var(--text-secondary)]">Run summary</p>
+                  <Show
+                    when={props.selectedBoardRuntimeSummary()}
+                    fallback={
+                      <p class="m-0 text-[11.5px] leading-[1.35] text-[var(--text-muted)]">
+                        Run summary will appear once runtime evidence is available.
+                      </p>
+                    }
+                  >
+                    {(summary) => (
+                      <div class="flex flex-col gap-2 rounded-[8px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                            {formatStatusLabel(summary().completion.status)}
+                          </span>
+                          <span class="text-[10.5px] text-[var(--text-muted)]">
+                            {formatRuntimeTimestamp(summary().completion.terminalAt)}
+                          </span>
+                        </div>
+
+                        <div class="flex flex-col gap-1.5">
+                          <p class="m-0 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--text-secondary)]">
+                            Key actions
+                          </p>
+                          <Show
+                            when={summary().keyActions.length > 0}
+                            fallback={
+                              <p class="m-0 text-[11px] leading-[1.35] text-[var(--text-muted)]">
+                                No summary actions were recorded.
+                              </p>
+                            }
+                          >
+                            <ul class="m-0 flex list-disc flex-col gap-1 pl-4 text-[11px] leading-[1.4] text-[var(--text-primary)]">
+                              <For each={summary().keyActions}>
+                                {(action) => (
+                                  <li>
+                                    <span>{action.message}</span>
+                                  </li>
+                                )}
+                              </For>
+                            </ul>
+                          </Show>
+                        </div>
+
+                        <div class="flex flex-col gap-1.5">
+                          <p class="m-0 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--text-secondary)]">
+                            Validation outcomes
+                          </p>
+                          <div class="flex flex-wrap gap-2">
+                            <span class="inline-flex items-center gap-1 rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] text-[var(--text-secondary)]">
+                              <span class="font-semibold text-[var(--text-primary)]">Code</span>
+                              <span>{formatStatusLabel(summary().validationOutcomes.code)}</span>
+                            </span>
+                            <span class="inline-flex items-center gap-1 rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] text-[var(--text-secondary)]">
+                              <span class="font-semibold text-[var(--text-primary)]">Browser</span>
+                              <span>{formatStatusLabel(summary().validationOutcomes.browser)}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </Show>
                 </section>
 
