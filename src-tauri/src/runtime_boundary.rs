@@ -1204,28 +1204,201 @@ pub struct RuntimeIssueRunHistoryRequest {
 }
 
 fn runtime_get_repository_run_snapshot_inner(
-    _conn: &Connection,
+    conn: &Connection,
     repository_key: &str,
     repository_full_name: &str,
 ) -> Result<RuntimeRepositoryRunSnapshot, String> {
+    let mut queue_position_stmt = conn
+        .prepare(
+            "SELECT run_id
+             FROM runtime_runs
+             WHERE repository_key = ?1
+               AND terminal_status IS NULL
+               AND stage = ?2
+             ORDER BY queue_order ASC, run_id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let queued_rows = queue_position_stmt
+        .query_map(params![repository_key, RuntimeRunStage::Queued.as_str()], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|e| e.to_string())?;
+    let queued_run_ids: Vec<i64> = queued_rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(queue_position_stmt);
+
+    let queue_positions: HashMap<i64, usize> = queued_run_ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, run_id)| (run_id, index + 1))
+        .collect();
+
+    let mut runs_stmt = conn
+        .prepare(
+            "SELECT
+                r.run_id,
+                r.repository_key,
+                r.repository_full_name,
+                r.issue_number,
+                r.issue_title,
+                r.issue_branch_name,
+                r.queue_order,
+                r.stage,
+                r.terminal_status,
+                r.reason_code,
+                r.fix_hint,
+                r.created_at,
+                r.updated_at,
+                r.terminal_at
+             FROM runtime_runs r
+             WHERE r.repository_key = ?1
+               AND r.run_id = (
+                    SELECT candidate.run_id
+                    FROM runtime_runs candidate
+                    WHERE candidate.repository_key = r.repository_key
+                      AND candidate.issue_number = r.issue_number
+                    ORDER BY
+                        (candidate.terminal_status IS NULL) DESC,
+                        candidate.updated_at DESC,
+                        candidate.run_id DESC
+                    LIMIT 1
+               )
+             ORDER BY r.issue_number ASC, r.run_id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let runs = runs_stmt
+        .query_map(params![repository_key], read_runtime_persisted_run)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let snapshot_items = runs
+        .into_iter()
+        .map(|run| RuntimeRepositoryRunSnapshotItem {
+            run_id: run.run_id,
+            issue_number: run.issue_number,
+            issue_title: run.issue_title,
+            issue_branch_name: run.issue_branch_name,
+            stage: run.stage.as_str().to_string(),
+            queue_position: queue_positions.get(&run.run_id).copied(),
+            terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
+            reason_code: run.reason_code,
+            fix_hint: run.fix_hint,
+            updated_at: run.updated_at,
+            terminal_at: run.terminal_at,
+        })
+        .collect();
+
     Ok(RuntimeRepositoryRunSnapshot {
         repository_full_name: repository_full_name.to_string(),
         repository_key: repository_key.to_string(),
-        runs: Vec::new(),
+        runs: snapshot_items,
     })
 }
 
 fn runtime_get_issue_run_history_inner(
-    _conn: &Connection,
+    conn: &Connection,
     repository_key: &str,
     repository_full_name: &str,
     issue_number: i64,
 ) -> Result<RuntimeIssueRunHistory, String> {
+    let mut queue_position_stmt = conn
+        .prepare(
+            "SELECT run_id
+             FROM runtime_runs
+             WHERE repository_key = ?1
+               AND terminal_status IS NULL
+               AND stage = ?2
+             ORDER BY queue_order ASC, run_id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let queued_rows = queue_position_stmt
+        .query_map(params![repository_key, RuntimeRunStage::Queued.as_str()], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|e| e.to_string())?;
+    let queued_run_ids: Vec<i64> = queued_rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(queue_position_stmt);
+    let queue_positions: HashMap<i64, usize> = queued_run_ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, run_id)| (run_id, index + 1))
+        .collect();
+
+    let mut history_stmt = conn
+        .prepare(
+            "SELECT
+                run_id,
+                repository_key,
+                repository_full_name,
+                issue_number,
+                issue_title,
+                issue_branch_name,
+                queue_order,
+                stage,
+                terminal_status,
+                reason_code,
+                fix_hint,
+                created_at,
+                updated_at,
+                terminal_at
+             FROM runtime_runs
+             WHERE repository_key = ?1
+               AND issue_number = ?2
+             ORDER BY
+                COALESCE(terminal_at, updated_at) DESC,
+                run_id DESC
+             LIMIT 20",
+        )
+        .map_err(|e| e.to_string())?;
+    let runs = history_stmt
+        .query_map(params![repository_key, issue_number], read_runtime_persisted_run)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut history_items = Vec::with_capacity(runs.len());
+    for run in runs {
+        let transitions = load_runtime_run_transitions_newest_first(conn, run.run_id)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|transition| RuntimeRunTransitionHistoryItem {
+                sequence: transition.sequence,
+                stage: transition.stage.as_str().to_string(),
+                terminal_status: transition
+                    .terminal_status
+                    .map(|status| status.as_str().to_string()),
+                reason_code: transition.reason_code,
+                fix_hint: transition.fix_hint,
+                created_at: transition.created_at,
+            })
+            .collect();
+
+        history_items.push(RuntimeIssueRunHistoryItem {
+            run_id: run.run_id,
+            issue_number: run.issue_number,
+            issue_title: run.issue_title,
+            issue_branch_name: run.issue_branch_name,
+            stage: run.stage.as_str().to_string(),
+            queue_position: queue_positions.get(&run.run_id).copied(),
+            terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
+            reason_code: run.reason_code,
+            fix_hint: run.fix_hint,
+            created_at: run.created_at,
+            updated_at: run.updated_at,
+            terminal_at: run.terminal_at,
+            transitions,
+        });
+    }
+
     Ok(RuntimeIssueRunHistory {
         repository_full_name: repository_full_name.to_string(),
         repository_key: repository_key.to_string(),
         issue_number,
-        runs: Vec::new(),
+        runs: history_items,
     })
 }
 

@@ -1,4 +1,7 @@
-use crate::db::{with_connection, DbPath};
+use crate::{
+    db::{with_connection, DbPath},
+    runtime_boundary::{self, RuntimeIssueRunHistoryRequest},
+};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use std::{
@@ -226,4 +229,20 @@ pub async fn pick_development_folder() -> Option<String> {
         .pick_folder()
         .await
         .map(|handle| handle.path().display().to_string())
+}
+
+#[tauri::command]
+pub fn runtime_get_repository_run_snapshot(
+    db_path: State<'_, DbPath>,
+    repository_full_name: String,
+) -> Result<runtime_boundary::RuntimeRepositoryRunSnapshot, String> {
+    runtime_boundary::runtime_get_repository_run_snapshot(&db_path.0, &repository_full_name)
+}
+
+#[tauri::command]
+pub fn runtime_get_issue_run_history(
+    db_path: State<'_, DbPath>,
+    request: RuntimeIssueRunHistoryRequest,
+) -> Result<runtime_boundary::RuntimeIssueRunHistory, String> {
+    runtime_boundary::runtime_get_issue_run_history(&db_path.0, request)
 }
