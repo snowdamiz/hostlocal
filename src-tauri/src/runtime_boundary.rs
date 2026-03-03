@@ -2976,6 +2976,139 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_issue_telemetry_defaults_to_latest_run_and_applies_limit() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4016;
+
+        let first_run = build_run("owner/repo", issue_number, "Telemetry run one");
+        let first_persisted = insert_runtime_run(&conn, &first_run).expect("persist first run");
+        insert_runtime_run_event(
+            &conn,
+            first_persisted.run_id,
+            "milestone",
+            "queued",
+            "first-run event",
+            true,
+        )
+        .expect("insert first run event");
+
+        let second_run = build_run("owner/repo", issue_number, "Telemetry run two");
+        let second_persisted = insert_runtime_run(&conn, &second_run).expect("persist second run");
+        insert_runtime_run_event(
+            &conn,
+            second_persisted.run_id,
+            "milestone",
+            "queued",
+            "second-run oldest",
+            true,
+        )
+        .expect("insert second run first event");
+        insert_runtime_run_event(
+            &conn,
+            second_persisted.run_id,
+            "milestone",
+            "coding",
+            "second-run newest",
+            true,
+        )
+        .expect("insert second run second event");
+
+        let telemetry = runtime_get_issue_run_telemetry_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            None,
+            Some(1),
+        )
+        .expect("load issue telemetry");
+
+        assert_eq!(telemetry.repository_key, "owner/repo");
+        assert_eq!(telemetry.issue_number, issue_number);
+        assert_eq!(telemetry.run_id, second_persisted.run_id);
+        assert_eq!(telemetry.events.len(), 1);
+        assert_eq!(telemetry.events[0].message, "second-run newest");
+        assert_eq!(telemetry.events[0].sequence, 2);
+    }
+
+    #[test]
+    fn runtime_boundary_issue_telemetry_supports_explicit_run_selection() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4017;
+
+        let first_run = build_run("owner/repo", issue_number, "Telemetry run one");
+        let first_persisted = insert_runtime_run(&conn, &first_run).expect("persist first run");
+        insert_runtime_run_event(
+            &conn,
+            first_persisted.run_id,
+            "milestone",
+            "queued",
+            "first-run event",
+            true,
+        )
+        .expect("insert first run event");
+
+        let second_run = build_run("owner/repo", issue_number, "Telemetry run two");
+        let second_persisted = insert_runtime_run(&conn, &second_run).expect("persist second run");
+        insert_runtime_run_event(
+            &conn,
+            second_persisted.run_id,
+            "milestone",
+            "queued",
+            "second-run event",
+            true,
+        )
+        .expect("insert second run event");
+
+        let telemetry = runtime_get_issue_run_telemetry_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            Some(first_persisted.run_id),
+            Some(10),
+        )
+        .expect("load issue telemetry");
+
+        assert_eq!(telemetry.run_id, first_persisted.run_id);
+        assert_eq!(telemetry.events.len(), 1);
+        assert_eq!(telemetry.events[0].message, "first-run event");
+    }
+
+    #[test]
+    fn runtime_boundary_issue_telemetry_rejects_invalid_request_with_actionable_text() {
+        let invalid_repository = runtime_get_issue_run_telemetry(
+            Path::new("/tmp/hostlocal-test.db"),
+            RuntimeIssueRunTelemetryRequest {
+                repository_full_name: "invalid".to_string(),
+                issue_number: 4018,
+                run_id: None,
+                limit: None,
+            },
+        )
+        .expect_err("invalid repository should be rejected");
+        assert_eq!(
+            invalid_repository,
+            "Select a valid repository issue before loading runtime telemetry."
+        );
+
+        let invalid_issue = runtime_get_issue_run_telemetry(
+            Path::new("/tmp/hostlocal-test.db"),
+            RuntimeIssueRunTelemetryRequest {
+                repository_full_name: "Owner/Repo".to_string(),
+                issue_number: 0,
+                run_id: None,
+                limit: None,
+            },
+        )
+        .expect_err("invalid issue should be rejected");
+        assert_eq!(
+            invalid_issue,
+            "Select a valid repository issue before loading runtime telemetry."
+        );
+    }
+
+    #[test]
     fn runtime_boundary_milestone_templates_cover_lifecycle_checkpoints() {
         let checkpoints = [
             (
