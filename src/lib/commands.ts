@@ -136,6 +136,85 @@ export interface RuntimeIssueRunHistoryRequest {
   issueNumber: number;
 }
 
+export interface RuntimeIssueRunTelemetryRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  runId?: number | null;
+  limit?: number | null;
+}
+
+export interface RuntimeTelemetryRedactionReason {
+  reasonCode: string;
+  matchCount: number;
+}
+
+export interface RuntimeRunTelemetryEventPayload {
+  eventId: number;
+  runId: number;
+  repositoryFullName: string;
+  repositoryKey: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueBranchName: string;
+  sequence: number;
+  kind: string;
+  stage: string;
+  message: string;
+  redactionReasons: RuntimeTelemetryRedactionReason[];
+  includeInSummary: boolean;
+  createdAt: string;
+}
+
+export interface RuntimeIssueRunTelemetry {
+  repositoryFullName: string;
+  repositoryKey: string;
+  issueNumber: number;
+  runId: number;
+  events: RuntimeRunTelemetryEventPayload[];
+}
+
+export type RuntimeIssueRunSummaryCompletionStatus = RuntimeTerminalStatus | "in-progress";
+
+export interface RuntimeIssueRunSummaryCompletion {
+  status: RuntimeIssueRunSummaryCompletionStatus;
+  terminalAt: string | null;
+}
+
+export interface RuntimeIssueRunSummaryKeyAction {
+  kind: string;
+  stage: string;
+  message: string;
+  createdAt: string;
+}
+
+export type RuntimeIssueRunSummaryValidationStatus =
+  | "pass"
+  | "fail"
+  | "timeout"
+  | "not-found"
+  | "not-run";
+
+export interface RuntimeIssueRunSummaryValidationOutcomes {
+  code: RuntimeIssueRunSummaryValidationStatus;
+  browser: RuntimeIssueRunSummaryValidationStatus;
+}
+
+export interface RuntimeIssueRunSummary {
+  repositoryFullName: string;
+  repositoryKey: string;
+  issueNumber: number;
+  runId: number;
+  completion: RuntimeIssueRunSummaryCompletion;
+  keyActions: RuntimeIssueRunSummaryKeyAction[];
+  validationOutcomes: RuntimeIssueRunSummaryValidationOutcomes;
+}
+
+export interface RuntimeIssueRunSummaryRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  runId?: number | null;
+}
+
 export interface RuntimeRunStageChangedEventPayload {
   runId: number;
   repositoryFullName: string;
@@ -261,6 +340,18 @@ export function runtimeGetRepositoryRunSnapshot(repositoryFullName: string): Pro
 
 export function runtimeGetIssueRunHistory(request: RuntimeIssueRunHistoryRequest): Promise<RuntimeIssueRunHistory> {
   return invoke<RuntimeIssueRunHistory>("runtime_get_issue_run_history", { request });
+}
+
+export function runtimeGetIssueRunTelemetry(
+  request: RuntimeIssueRunTelemetryRequest,
+): Promise<RuntimeIssueRunTelemetry> {
+  return invoke<RuntimeIssueRunTelemetry>("runtime_get_issue_run_telemetry", { request });
+}
+
+export function runtimeGetIssueRunSummary(
+  request: RuntimeIssueRunSummaryRequest,
+): Promise<RuntimeIssueRunSummary> {
+  return invoke<RuntimeIssueRunSummary>("runtime_get_issue_run_summary", { request });
 }
 
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {

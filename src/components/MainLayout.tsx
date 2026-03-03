@@ -46,6 +46,8 @@ export function MainLayout() {
     selectedBoardItem,
     selectedBoardRuntime,
     selectedBoardRuntimeHistory,
+    selectedBoardRuntimeSummary,
+    selectedBoardRuntimeTelemetry,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,
@@ -135,6 +137,8 @@ export function MainLayout() {
         selectedBoardItem={selectedBoardItem}
         selectedBoardRuntime={selectedBoardRuntime}
         selectedBoardRuntimeHistory={selectedBoardRuntimeHistory}
+        selectedBoardRuntimeTelemetry={selectedBoardRuntimeTelemetry}
+        selectedBoardRuntimeSummary={selectedBoardRuntimeSummary}
         onClose={closeIssuePanel}
         onOpenGithubItemPage={openGithubItemPage}
       />

@@ -8,6 +8,8 @@ import {
   runtimeDequeueIssueRun,
   runtimeEnqueueIssueRun,
   runtimeGetIssueRunHistory,
+  runtimeGetIssueRunSummary,
+  runtimeGetIssueRunTelemetry,
   runtimeGetRepositoryRunSnapshot,
   type RuntimeDequeueIssueRunOutcome,
   type GithubIssueIntakeOutcome,
@@ -15,8 +17,11 @@ import {
   type GithubRepositoryItem,
   type GithubUser,
   type RuntimeIssueRunHistoryItem,
+  type RuntimeIssueRunSummary,
+  type RuntimeIssueRunTelemetry,
   type RuntimeRepositoryRunSnapshot,
   type RuntimeRepositoryRunSnapshotItem,
+  type RuntimeRunTelemetryEventPayload,
   type RuntimeRunStageChangedEventPayload,
   type RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
@@ -40,9 +45,13 @@ const DRAG_GHOST_CURSOR_OFFSET_Y = 16;
 const DRAG_GHOST_SNAPBACK_DURATION_MS = 240;
 const DEFAULT_AGENT_LABEL = "hostlocal";
 const RUNTIME_STAGE_CHANGED_EVENT_NAME = "runtime/run-stage-changed";
+const RUNTIME_RUN_TELEMETRY_EVENT_NAME = "runtime/run-telemetry";
+const RUNTIME_TELEMETRY_REPLAY_LIMIT = 24;
 
 export type RuntimeSnapshotByIssueNumber = Record<number, RuntimeRepositoryRunSnapshotItem>;
 export type RuntimeHistoryByIssueNumber = Record<number, RuntimeIssueRunHistoryItem[]>;
+export type RuntimeTelemetryByIssueNumber = Record<number, RuntimeRunTelemetryEventPayload[]>;
+export type RuntimeSummaryByIssueNumber = Record<number, RuntimeIssueRunSummary | null>;
 
 interface LoadRepositoryItemsOptions {
   background?: boolean;
@@ -207,6 +216,37 @@ export function mapRuntimeSnapshotByIssueNumber(snapshot: RuntimeRepositoryRunSn
   return mapped;
 }
 
+const sortRuntimeTelemetryNewestFirst = (
+  events: RuntimeRunTelemetryEventPayload[],
+): RuntimeRunTelemetryEventPayload[] =>
+  [...events].sort((left, right) => {
+    if (left.sequence !== right.sequence) {
+      return right.sequence - left.sequence;
+    }
+    return right.eventId - left.eventId;
+  });
+
+export function mapRuntimeTelemetryByIssueNumber(
+  telemetry: RuntimeIssueRunTelemetry,
+): RuntimeTelemetryByIssueNumber {
+  return {
+    [telemetry.issueNumber]: sortRuntimeTelemetryNewestFirst(telemetry.events),
+  };
+}
+
+export function mergeRuntimeTelemetryPayloadByIssueNumber(
+  current: RuntimeTelemetryByIssueNumber,
+  payload: RuntimeRunTelemetryEventPayload,
+): RuntimeTelemetryByIssueNumber {
+  const existing = current[payload.issueNumber] ?? [];
+  const deduped = existing.filter((event) => event.eventId !== payload.eventId);
+  const merged = sortRuntimeTelemetryNewestFirst([payload, ...deduped]).slice(0, RUNTIME_TELEMETRY_REPLAY_LIMIT);
+  return {
+    ...current,
+    [payload.issueNumber]: merged,
+  };
+}
+
 export function mergeRuntimeStageChangedPayload(
   current: RuntimeSnapshotByIssueNumber,
   payload: RuntimeRunStageChangedEventPayload,
@@ -259,6 +299,35 @@ export async function subscribeRuntimeStageChangedEvents(
   };
 }
 
+export interface RuntimeTelemetryEventSubscriptionDependencies {
+  listen: typeof listen;
+}
+
+const runtimeTelemetryEventSubscriptionDependencies: RuntimeTelemetryEventSubscriptionDependencies = {
+  listen,
+};
+
+export async function subscribeRuntimeTelemetryEvents(
+  repositoryFullName: string,
+  onPayload: (payload: RuntimeRunTelemetryEventPayload) => void,
+  dependencies: RuntimeTelemetryEventSubscriptionDependencies = runtimeTelemetryEventSubscriptionDependencies,
+): Promise<() => void> {
+  const expectedRepository = normalizeRepositoryIdentifier(repositoryFullName);
+  const unlisten = await dependencies.listen<RuntimeRunTelemetryEventPayload>(
+    RUNTIME_RUN_TELEMETRY_EVENT_NAME,
+    (event: TauriEvent<RuntimeRunTelemetryEventPayload>) => {
+      const payload = event.payload;
+      if (normalizeRepositoryIdentifier(payload.repositoryFullName) !== expectedRepository) {
+        return;
+      }
+      onPayload(payload);
+    },
+  );
+  return () => {
+    unlisten();
+  };
+}
+
 export function useBoardInteractions(
   githubUser: Accessor<GithubUser | null>,
   selectedRepository: Accessor<GithubRepository | null>,
@@ -277,16 +346,24 @@ export function useBoardInteractions(
   const [selectedBoardItemId, setSelectedBoardItemId] = createSignal<number | null>(null);
   const [runtimeSnapshotByIssueNumber, setRuntimeSnapshotByIssueNumber] = createSignal<RuntimeSnapshotByIssueNumber>({});
   const [runtimeHistoryByIssueNumber, setRuntimeHistoryByIssueNumber] = createSignal<RuntimeHistoryByIssueNumber>({});
+  const [runtimeTelemetryByIssueNumber, setRuntimeTelemetryByIssueNumber] = createSignal<RuntimeTelemetryByIssueNumber>({});
+  const [runtimeSummaryByIssueNumber, setRuntimeSummaryByIssueNumber] = createSignal<RuntimeSummaryByIssueNumber>({});
 
   let repositoryItemsRequestId = 0;
   let runtimeSnapshotRequestId = 0;
   let runtimeHistoryRequestId = 0;
+  let runtimeTelemetryRequestId = 0;
+  let runtimeSummaryRequestId = 0;
   let runtimeStageListenerRequestId = 0;
+  let runtimeTelemetryListenerRequestId = 0;
   let repositoryItemsLoadingCount = 0;
   let pointerDragState: PointerDragState | null = null;
   let runtimeStageUnlisten: (() => void) | null = null;
+  let runtimeTelemetryUnlisten: (() => void) | null = null;
   let activeRepositoryKey: string | null = null;
   let activeHistoryKey: string | null = null;
+  let activeTelemetryKey: string | null = null;
+  let activeSummaryKey: string | null = null;
   const intakeAttemptState = createIntakeAttemptState();
 
   const selectedBoardItem = createMemo(() => {
@@ -314,21 +391,48 @@ export function useBoardInteractions(
     return runtimeHistoryByIssueNumber()[item.number] ?? [];
   });
 
+  const selectedBoardRuntimeTelemetry = createMemo(() => {
+    const item = selectedBoardItem();
+    if (!item) {
+      return [];
+    }
+    return runtimeTelemetryByIssueNumber()[item.number] ?? [];
+  });
+
+  const selectedBoardRuntimeSummary = createMemo(() => {
+    const item = selectedBoardItem();
+    if (!item) {
+      return null;
+    }
+    return runtimeSummaryByIssueNumber()[item.number] ?? null;
+  });
+
   const clearRepositoryItemState = () => {
     activeHistoryKey = null;
+    activeTelemetryKey = null;
+    activeSummaryKey = null;
     repositoryItemsRequestId += 1;
     runtimeSnapshotRequestId += 1;
     runtimeHistoryRequestId += 1;
+    runtimeTelemetryRequestId += 1;
+    runtimeSummaryRequestId += 1;
     runtimeStageListenerRequestId += 1;
+    runtimeTelemetryListenerRequestId += 1;
     if (runtimeStageUnlisten) {
       runtimeStageUnlisten();
       runtimeStageUnlisten = null;
+    }
+    if (runtimeTelemetryUnlisten) {
+      runtimeTelemetryUnlisten();
+      runtimeTelemetryUnlisten = null;
     }
     repositoryItemsLoadingCount = 0;
     pointerDragState = null;
     setRepositoryItems([]);
     setRuntimeSnapshotByIssueNumber({});
     setRuntimeHistoryByIssueNumber({});
+    setRuntimeTelemetryByIssueNumber({});
+    setRuntimeSummaryByIssueNumber({});
     setRepositoryItemsError(null);
     setIsRepositoryItemsLoading(false);
     setOptimisticColumnByItemId({});
@@ -512,6 +616,69 @@ export function useBoardInteractions(
     }
   };
 
+  const hydrateRuntimeTelemetryForIssue = async (
+    repositoryFullName: string,
+    issueNumber: number,
+    runId?: number,
+  ) => {
+    const requestId = ++runtimeTelemetryRequestId;
+    try {
+      const telemetry = await runtimeGetIssueRunTelemetry({
+        repositoryFullName,
+        issueNumber,
+        runId: runId ?? null,
+        limit: RUNTIME_TELEMETRY_REPLAY_LIMIT,
+      });
+      if (requestId !== runtimeTelemetryRequestId) {
+        return;
+      }
+      setRuntimeTelemetryByIssueNumber((current) => ({
+        ...current,
+        ...mapRuntimeTelemetryByIssueNumber(telemetry),
+      }));
+    } catch (error) {
+      if (requestId !== runtimeTelemetryRequestId) {
+        return;
+      }
+      console.warn("[board] runtime issue telemetry hydration failed", error);
+      setRuntimeTelemetryByIssueNumber((current) => ({
+        ...current,
+        [issueNumber]: [],
+      }));
+    }
+  };
+
+  const hydrateRuntimeSummaryForIssue = async (
+    repositoryFullName: string,
+    issueNumber: number,
+    runId?: number,
+  ) => {
+    const requestId = ++runtimeSummaryRequestId;
+    try {
+      const summary = await runtimeGetIssueRunSummary({
+        repositoryFullName,
+        issueNumber,
+        runId: runId ?? null,
+      });
+      if (requestId !== runtimeSummaryRequestId) {
+        return;
+      }
+      setRuntimeSummaryByIssueNumber((current) => ({
+        ...current,
+        [issueNumber]: summary,
+      }));
+    } catch (error) {
+      if (requestId !== runtimeSummaryRequestId) {
+        return;
+      }
+      console.warn("[board] runtime issue summary hydration failed", error);
+      setRuntimeSummaryByIssueNumber((current) => ({
+        ...current,
+        [issueNumber]: null,
+      }));
+    }
+  };
+
   const setupRuntimeStageListener = async (repositoryFullName: string) => {
     const requestId = ++runtimeStageListenerRequestId;
     if (runtimeStageUnlisten) {
@@ -526,6 +693,9 @@ export function useBoardInteractions(
         const activeItem = selectedBoardItem();
         if (activeRepository && activeItem && activeItem.number === payload.issueNumber) {
           void hydrateRuntimeHistoryForIssue(activeRepository.fullName, activeItem.number);
+          if (payload.terminalStatus) {
+            void hydrateRuntimeSummaryForIssue(activeRepository.fullName, activeItem.number, payload.runId);
+          }
         }
       });
 
@@ -539,6 +709,36 @@ export function useBoardInteractions(
         return;
       }
       console.warn("[board] runtime stage listener setup failed", error);
+    }
+  };
+
+  const setupRuntimeTelemetryListener = async (repositoryFullName: string) => {
+    const requestId = ++runtimeTelemetryListenerRequestId;
+    if (runtimeTelemetryUnlisten) {
+      runtimeTelemetryUnlisten();
+      runtimeTelemetryUnlisten = null;
+    }
+
+    try {
+      const unlisten = await subscribeRuntimeTelemetryEvents(repositoryFullName, (payload) => {
+        setRuntimeTelemetryByIssueNumber((current) => mergeRuntimeTelemetryPayloadByIssueNumber(current, payload));
+        const activeRepository = selectedRepository();
+        const activeItem = selectedBoardItem();
+        if (activeRepository && activeItem && activeItem.number === payload.issueNumber) {
+          void hydrateRuntimeSummaryForIssue(activeRepository.fullName, activeItem.number, payload.runId);
+        }
+      });
+
+      if (requestId !== runtimeTelemetryListenerRequestId) {
+        unlisten();
+        return;
+      }
+      runtimeTelemetryUnlisten = unlisten;
+    } catch (error) {
+      if (requestId !== runtimeTelemetryListenerRequestId) {
+        return;
+      }
+      console.warn("[board] runtime telemetry listener setup failed", error);
     }
   };
 
@@ -894,6 +1094,7 @@ export function useBoardInteractions(
     void loadRepositoryItems(repository.fullName);
     void hydrateRuntimeSnapshot(repository.fullName);
     void setupRuntimeStageListener(repository.fullName);
+    void setupRuntimeTelemetryListener(repository.fullName);
   });
 
   createEffect(() => {
@@ -901,15 +1102,31 @@ export function useBoardInteractions(
     const item = selectedBoardItem();
     if (!repository || !item) {
       activeHistoryKey = null;
+      activeTelemetryKey = null;
+      activeSummaryKey = null;
       return;
     }
 
-    const historyKey = `${normalizeRepositoryIdentifier(repository.fullName)}#${item.number}`;
+    const issueScopeKey = `${normalizeRepositoryIdentifier(repository.fullName)}#${item.number}`;
+    const historyKey = `${issueScopeKey}:history`;
     if (activeHistoryKey === historyKey) {
-      return;
+      // Keep checking telemetry/summary keys in the same effect.
+    } else {
+      activeHistoryKey = historyKey;
+      void hydrateRuntimeHistoryForIssue(repository.fullName, item.number);
     }
-    activeHistoryKey = historyKey;
-    void hydrateRuntimeHistoryForIssue(repository.fullName, item.number);
+
+    const telemetryKey = `${issueScopeKey}:telemetry`;
+    if (activeTelemetryKey !== telemetryKey) {
+      activeTelemetryKey = telemetryKey;
+      void hydrateRuntimeTelemetryForIssue(repository.fullName, item.number);
+    }
+
+    const summaryKey = `${issueScopeKey}:summary`;
+    if (activeSummaryKey !== summaryKey) {
+      activeSummaryKey = summaryKey;
+      void hydrateRuntimeSummaryForIssue(repository.fullName, item.number);
+    }
   });
 
   onMount(() => {
@@ -922,6 +1139,10 @@ export function useBoardInteractions(
     if (runtimeStageUnlisten) {
       runtimeStageUnlisten();
       runtimeStageUnlisten = null;
+    }
+    if (runtimeTelemetryUnlisten) {
+      runtimeTelemetryUnlisten();
+      runtimeTelemetryUnlisten = null;
     }
     pointerDragState = null;
     clearIntakeAttempts(intakeAttemptState);
@@ -942,10 +1163,14 @@ export function useBoardInteractions(
     isCardDragging,
     runtimeSnapshotByIssueNumber,
     runtimeHistoryByIssueNumber,
+    runtimeTelemetryByIssueNumber,
+    runtimeSummaryByIssueNumber,
     selectedBoardItemId,
     selectedBoardItem,
     selectedBoardRuntime,
     selectedBoardRuntimeHistory,
+    selectedBoardRuntimeTelemetry,
+    selectedBoardRuntimeSummary,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,

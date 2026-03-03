@@ -3,7 +3,9 @@ import { siGithub } from "simple-icons";
 import type {
   GithubRepositoryItem,
   RuntimeIssueRunHistoryItem,
+  RuntimeIssueRunSummary,
   RuntimeRepositoryRunSnapshotItem,
+  RuntimeRunTelemetryEventPayload,
 } from "../../../lib/commands";
 import { resolveIntakePolicyReason } from "../../../intake/policy-reasons";
 import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../../issue-content/issue-body";
@@ -12,6 +14,8 @@ interface IssueDetailsPanelProps {
   selectedBoardItem: Accessor<GithubRepositoryItem | null>;
   selectedBoardRuntime: Accessor<RuntimeRepositoryRunSnapshotItem | null>;
   selectedBoardRuntimeHistory: Accessor<RuntimeIssueRunHistoryItem[]>;
+  selectedBoardRuntimeTelemetry: Accessor<RuntimeRunTelemetryEventPayload[]>;
+  selectedBoardRuntimeSummary: Accessor<RuntimeIssueRunSummary | null>;
   onClose: () => void;
   onOpenGithubItemPage: (url: string) => Promise<void>;
 }
