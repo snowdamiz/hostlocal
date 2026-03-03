@@ -3506,6 +3506,53 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_pause_state_persistence_updates_is_paused_and_paused_at() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4013, "Pause persistence");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+
+        let paused = set_runtime_run_paused_state(&conn, persisted.run_id, true)
+            .expect("pause persisted runtime run");
+        assert!(paused.is_paused);
+        assert!(paused.paused_at.is_some());
+
+        let resumed = set_runtime_run_paused_state(&conn, persisted.run_id, false)
+            .expect("resume persisted runtime run");
+        assert!(!resumed.is_paused);
+        assert_eq!(resumed.paused_at, None);
+    }
+
+    #[test]
+    fn runtime_boundary_control_outcome_acknowledged_sets_pause_state() {
+        let outcome = RuntimeRunControlOutcome::acknowledged(9001, Some(true));
+        assert!(outcome.acknowledged);
+        assert_eq!(outcome.run_id, Some(9001));
+        assert_eq!(outcome.is_paused, Some(true));
+        assert_eq!(outcome.reason_code, None);
+        assert_eq!(outcome.fix_hint, None);
+    }
+
+    #[test]
+    fn runtime_boundary_control_outcome_rejected_sets_reason_and_fix_hint() {
+        let outcome = RuntimeRunControlOutcome::rejected(
+            Some(9002),
+            "runtime_pause_not_active",
+            "Only active runs can be paused.",
+        );
+        assert!(!outcome.acknowledged);
+        assert_eq!(outcome.run_id, Some(9002));
+        assert_eq!(outcome.is_paused, None);
+        assert_eq!(
+            outcome.reason_code.as_deref(),
+            Some("runtime_pause_not_active")
+        );
+        assert_eq!(
+            outcome.fix_hint.as_deref(),
+            Some("Only active runs can be paused.")
+        );
+    }
+
+    #[test]
     fn runtime_boundary_transition_history_can_be_read_newest_first() {
         let conn = runtime_schema_test_connection();
         let run = build_run("owner/repo", 4012, "Transition order");
