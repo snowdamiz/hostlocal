@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: In-Run User Control
-current_plan: 4
+current_plan: 5
 status: verifying
-stopped_at: Completed 06-in-run-user-control-04-PLAN.md
-last_updated: "2026-03-03T18:33:06.553Z"
+stopped_at: Completed 06-in-run-user-control-05-PLAN.md
+last_updated: "2026-03-03T19:04:05.336Z"
 last_activity: 2026-03-03
 progress:
   total_phases: 10
   completed_phases: 6
-  total_plans: 22
-  completed_plans: 22
+  total_plans: 23
+  completed_plans: 23
   percent: 100
 ---
 
@@ -32,12 +32,12 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 **Current Phase Name:** In-Run User Control
 **Total Phases:** 10
 **Phase:** 06 of 10 (In-Run User Control)
-**Plan:** 04 of 04 (next: 06-04-PLAN.md)
-**Current Plan:** 4
-**Total Plans in Phase:** 4
+**Plan:** 05 of 05 (next: none)
+**Current Plan:** 5
+**Total Plans in Phase:** 5
 **Status:** Phase complete — ready for verification
 **Last Activity:** 2026-03-03
-**Last Activity Description:** Completed 06-04 selected-issue runtime control UI, abort confirmation, steering composer, and paused badge visibility updates.
+**Last Activity Description:** Completed 06-05 deterministic abort cleanup workspace-context persistence and race-order regression coverage.
 
 **Progress:** [██████████] 100%
 
@@ -79,6 +79,7 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 | Phase 06-in-run-user-control P01 | 19 min | 3 tasks | 3 files |
 | Phase 06-in-run-user-control P03 | 6m 38s | 3 tasks | 6 files |
 | Phase 06-in-run-user-control P04 | 5m 43s | 3 tasks | 6 files |
+| Phase 06-in-run-user-control P05 | 4m 41s | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,8 @@ Recent decisions affecting current work:
 - [Phase 06-in-run-user-control]: Keep runtime controls selected-issue scoped by passing board-hook APIs directly into IssueDetailsPanel.
 - [Phase 06-in-run-user-control]: Require explicit abort confirmation before invoking runtime abort commands.
 - [Phase 06-in-run-user-control]: Treat paused non-terminal runtime metadata as In Progress while preserving terminal precedence.
+- [Phase 06-in-run-user-control]: Persist workspace_root in RuntimeActiveRunControl and resolve it during abort finalization to keep cleanup deterministic.
+- [Phase 06-in-run-user-control]: Backfill missing terminal workspace context from active control state during terminal arbitration to preserve cleanup under race ordering.
 
 ### Roadmap Evolution
 
@@ -157,6 +160,6 @@ None currently.
 
 ## Session Continuity
 
-**Last session:** 2026-03-03T18:33:06.552Z
-**Stopped At:** Completed 06-in-run-user-control-04-PLAN.md
+**Last session:** 2026-03-03T19:04:05.335Z
+**Stopped At:** Completed 06-in-run-user-control-05-PLAN.md
 **Resume File:** None

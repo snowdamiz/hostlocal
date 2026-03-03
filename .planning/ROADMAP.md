@@ -166,7 +166,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
 | 5. Live Telemetry and Safe Summaries | 3/3 | Complete | 2026-03-03 |
-| 6. In-Run User Control | 4/4 | Complete | 2026-03-03 |
+| 6. In-Run User Control | 5/5 | Complete | 2026-03-03 |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
 | 9. Publish Reliability and Review Notification | 0/TBD | Not started | - |
