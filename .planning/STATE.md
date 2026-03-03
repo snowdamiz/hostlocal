@@ -4,10 +4,10 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: In-Run User Control
-current_plan: 5
-status: verifying
+current_plan: Not started
+status: completed
 stopped_at: Completed 06-in-run-user-control-05-PLAN.md
-last_updated: "2026-03-03T19:04:05.336Z"
+last_updated: "2026-03-03T19:15:39.447Z"
 last_activity: 2026-03-03
 progress:
   total_phases: 10
@@ -33,11 +33,11 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 **Total Phases:** 10
 **Phase:** 06 of 10 (In-Run User Control)
 **Plan:** 05 of 05 (next: none)
-**Current Plan:** 5
+**Current Plan:** Not started
 **Total Plans in Phase:** 5
-**Status:** Phase complete — ready for verification
+**Status:** Milestone complete
 **Last Activity:** 2026-03-03
-**Last Activity Description:** Completed 06-05 deterministic abort cleanup workspace-context persistence and race-order regression coverage.
+**Last Activity Description:** Phase 06 complete
 
 **Progress:** [██████████] 100%
 
