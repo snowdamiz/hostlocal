@@ -229,6 +229,32 @@ fn redact_sensitive_text(value: &str) -> RuntimeTelemetryRedactionResult {
     }
 }
 
+fn runtime_event_sanitized_read_view(
+    event: &RuntimePersistedRunEvent,
+) -> (String, Vec<RuntimeTelemetryRedactionReason>) {
+    let redaction = redact_sensitive_text(&event.message);
+    if redaction.masked_text == event.message {
+        return (event.message.clone(), event.redaction_reasons.clone());
+    }
+
+    let mut reason_counts = BTreeMap::<String, usize>::new();
+    for reason in &event.redaction_reasons {
+        *reason_counts.entry(reason.reason_code.clone()).or_insert(0) += reason.match_count;
+    }
+    for reason in redaction.reasons {
+        *reason_counts.entry(reason.reason_code).or_insert(0) += reason.match_count;
+    }
+
+    let merged_reasons = reason_counts
+        .into_iter()
+        .map(|(reason_code, match_count)| RuntimeTelemetryRedactionReason {
+            reason_code,
+            match_count,
+        })
+        .collect();
+    (redaction.masked_text, merged_reasons)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeEnqueueIssueRunRequest {
@@ -1119,6 +1145,7 @@ fn runtime_run_telemetry_payload_from_event(
     run: &RuntimePersistedRun,
     event: RuntimePersistedRunEvent,
 ) -> RuntimeRunTelemetryEventPayload {
+    let (sanitized_message, redaction_reasons) = runtime_event_sanitized_read_view(&event);
     RuntimeRunTelemetryEventPayload {
         event_id: event.event_id,
         run_id: run.run_id,
@@ -1130,8 +1157,8 @@ fn runtime_run_telemetry_payload_from_event(
         sequence: event.sequence,
         kind: event.kind,
         stage: event.stage,
-        message: event.message,
-        redaction_reasons: event.redaction_reasons,
+        message: sanitized_message,
+        redaction_reasons,
         include_in_summary: event.include_in_summary,
         created_at: event.created_at,
     }
@@ -2255,11 +2282,14 @@ fn runtime_get_issue_run_summary_inner(
         .iter()
         .filter(|event| event.include_in_summary)
         .take(MAX_RUNTIME_SUMMARY_KEY_ACTIONS)
-        .map(|event| RuntimeIssueRunSummaryKeyAction {
-            kind: event.kind.clone(),
-            stage: event.stage.clone(),
-            message: event.message.clone(),
-            created_at: event.created_at.clone(),
+        .map(|event| {
+            let (sanitized_message, _) = runtime_event_sanitized_read_view(event);
+            RuntimeIssueRunSummaryKeyAction {
+                kind: event.kind.clone(),
+                stage: event.stage.clone(),
+                message: sanitized_message,
+                created_at: event.created_at.clone(),
+            }
         })
         .collect();
 
