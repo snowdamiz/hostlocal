@@ -1134,6 +1134,139 @@ pub fn reconcile_runtime_state_on_startup(app: &AppHandle) -> Result<(), String>
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRepositoryRunSnapshotItem {
+    pub run_id: i64,
+    pub issue_number: i64,
+    pub issue_title: String,
+    pub issue_branch_name: String,
+    pub stage: String,
+    pub queue_position: Option<usize>,
+    pub terminal_status: Option<String>,
+    pub reason_code: Option<String>,
+    pub fix_hint: Option<String>,
+    pub updated_at: String,
+    pub terminal_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRepositoryRunSnapshot {
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub runs: Vec<RuntimeRepositoryRunSnapshotItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRunTransitionHistoryItem {
+    pub sequence: i64,
+    pub stage: String,
+    pub terminal_status: Option<String>,
+    pub reason_code: Option<String>,
+    pub fix_hint: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunHistoryItem {
+    pub run_id: i64,
+    pub issue_number: i64,
+    pub issue_title: String,
+    pub issue_branch_name: String,
+    pub stage: String,
+    pub queue_position: Option<usize>,
+    pub terminal_status: Option<String>,
+    pub reason_code: Option<String>,
+    pub fix_hint: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub terminal_at: Option<String>,
+    pub transitions: Vec<RuntimeRunTransitionHistoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunHistory {
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub issue_number: i64,
+    pub runs: Vec<RuntimeIssueRunHistoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunHistoryRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+}
+
+fn runtime_get_repository_run_snapshot_inner(
+    _conn: &Connection,
+    repository_key: &str,
+    repository_full_name: &str,
+) -> Result<RuntimeRepositoryRunSnapshot, String> {
+    Ok(RuntimeRepositoryRunSnapshot {
+        repository_full_name: repository_full_name.to_string(),
+        repository_key: repository_key.to_string(),
+        runs: Vec::new(),
+    })
+}
+
+fn runtime_get_issue_run_history_inner(
+    _conn: &Connection,
+    repository_key: &str,
+    repository_full_name: &str,
+    issue_number: i64,
+) -> Result<RuntimeIssueRunHistory, String> {
+    Ok(RuntimeIssueRunHistory {
+        repository_full_name: repository_full_name.to_string(),
+        repository_key: repository_key.to_string(),
+        issue_number,
+        runs: Vec::new(),
+    })
+}
+
+pub fn runtime_get_repository_run_snapshot(
+    db_path: &Path,
+    repository_full_name: &str,
+) -> Result<RuntimeRepositoryRunSnapshot, String> {
+    let repository_full_name = repository_full_name.trim();
+    let repository_key = normalize_repository_key(repository_full_name).ok_or_else(|| {
+        "Select a valid repository issue before loading runtime snapshot.".to_string()
+    })?;
+
+    with_connection(db_path, |conn| {
+        runtime_get_repository_run_snapshot_inner(conn, &repository_key, repository_full_name)
+            .map_err(runtime_invariant_error)
+    })
+}
+
+pub fn runtime_get_issue_run_history(
+    db_path: &Path,
+    request: RuntimeIssueRunHistoryRequest,
+) -> Result<RuntimeIssueRunHistory, String> {
+    let repository_full_name = request.repository_full_name.trim();
+    let repository_key = normalize_repository_key(repository_full_name).ok_or_else(|| {
+        "Select a valid repository issue before loading runtime run history.".to_string()
+    })?;
+    if request.issue_number <= 0 {
+        return Err("Select a valid repository issue before loading runtime run history.".to_string());
+    }
+
+    with_connection(db_path, |conn| {
+        runtime_get_issue_run_history_inner(
+            conn,
+            &repository_key,
+            repository_full_name,
+            request.issue_number,
+        )
+        .map_err(runtime_invariant_error)
+    })
+}
+
 fn runtime_transition_failed_outcome() -> RuntimeQueueOutcome {
     RuntimeQueueOutcome::startup_failed(
         "runtime_transition_persist_failed",
@@ -2061,6 +2194,134 @@ mod tests {
                 ("beta/repo".to_string(), 4202),
             ],
             "startup reconciliation should restore queued runs by repository and queue_order FIFO"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_snapshot_exposes_stage_queue_position_and_terminal_metadata() {
+        let conn = runtime_schema_test_connection();
+
+        let active_run = build_run("owner/repo", 4301, "Active");
+        let active_persisted = insert_runtime_run(&conn, &active_run).expect("persist active run");
+        transition_run_stage(
+            &conn,
+            active_persisted.run_id,
+            RuntimeRunStage::Queued,
+            Some(RuntimeRunStage::Preparing),
+            None,
+            None,
+            None,
+        )
+        .expect("queued -> preparing");
+        transition_run_stage(
+            &conn,
+            active_persisted.run_id,
+            RuntimeRunStage::Preparing,
+            Some(RuntimeRunStage::Coding),
+            None,
+            None,
+            None,
+        )
+        .expect("preparing -> coding");
+
+        let queued_run = build_run("owner/repo", 4302, "Queued");
+        let _queued_persisted = insert_runtime_run(&conn, &queued_run).expect("persist queued run");
+
+        let terminal_run = build_run("owner/repo", 4303, "Terminal");
+        let terminal_persisted =
+            insert_runtime_run(&conn, &terminal_run).expect("persist terminal run");
+        transition_run_stage(
+            &conn,
+            terminal_persisted.run_id,
+            RuntimeRunStage::Queued,
+            None,
+            Some(RuntimeTerminalStatus::Failed),
+            Some("runtime_snapshot_failed"),
+            Some("Retry after resolving the startup issue."),
+        )
+        .expect("finalize terminal run");
+
+        let snapshot = runtime_get_repository_run_snapshot_inner(&conn, "owner/repo", "Owner/Repo")
+            .expect("load snapshot");
+        assert_eq!(snapshot.repository_key, "owner/repo");
+        assert_eq!(snapshot.runs.len(), 3);
+
+        let by_issue: HashMap<i64, RuntimeRepositoryRunSnapshotItem> = snapshot
+            .runs
+            .into_iter()
+            .map(|item| (item.issue_number, item))
+            .collect();
+
+        let active = by_issue.get(&4301).expect("active issue entry");
+        assert_eq!(active.stage, "coding");
+        assert_eq!(active.queue_position, None);
+        assert_eq!(active.terminal_status, None);
+
+        let queued = by_issue.get(&4302).expect("queued issue entry");
+        assert_eq!(queued.stage, "queued");
+        assert_eq!(queued.queue_position, Some(1));
+        assert_eq!(queued.terminal_status, None);
+
+        let terminal = by_issue.get(&4303).expect("terminal issue entry");
+        assert_eq!(terminal.terminal_status.as_deref(), Some("failed"));
+        assert_eq!(
+            terminal.reason_code.as_deref(),
+            Some("runtime_snapshot_failed")
+        );
+        assert_eq!(
+            terminal.fix_hint.as_deref(),
+            Some("Retry after resolving the startup issue.")
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_issue_history_is_newest_first_and_bounded_to_twenty() {
+        let conn = runtime_schema_test_connection();
+
+        for index in 0..25_i64 {
+            let run = build_run("owner/repo", 4401, &format!("History run {index}"));
+            let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+            let reason_code = format!("runtime_history_failure_{index:02}");
+            let fix_hint = format!("History fix hint {index:02}");
+            transition_run_stage(
+                &conn,
+                persisted.run_id,
+                RuntimeRunStage::Queued,
+                None,
+                Some(RuntimeTerminalStatus::Failed),
+                Some(reason_code.as_str()),
+                Some(fix_hint.as_str()),
+            )
+            .expect("finalize runtime run");
+        }
+
+        let history = runtime_get_issue_run_history_inner(&conn, "owner/repo", "Owner/Repo", 4401)
+            .expect("load history");
+        assert_eq!(history.runs.len(), 20);
+        assert_eq!(
+            history.runs[0].reason_code.as_deref(),
+            Some("runtime_history_failure_24")
+        );
+        assert_eq!(
+            history.runs[19].reason_code.as_deref(),
+            Some("runtime_history_failure_05")
+        );
+        assert!(
+            history
+                .runs
+                .iter()
+                .all(|run| run.issue_number == 4401),
+            "history should only include rows for the selected issue"
+        );
+
+        let newest_run = history.runs.first().expect("newest history run");
+        assert!(
+            !newest_run.transitions.is_empty(),
+            "history entry should include transition timeline"
+        );
+        assert_eq!(
+            newest_run.transitions[0].terminal_status.as_deref(),
+            Some("failed")
         );
     }
 
