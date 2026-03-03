@@ -705,10 +705,15 @@ impl RuntimeBoundaryState {
             return RuntimeTerminalControlAction::Ignore;
         }
 
+        let mut resolved_request = request;
+        if resolved_request.workspace_root.is_none() {
+            resolved_request.workspace_root = control.workspace_root.clone();
+        }
+
         if control.is_paused && !control.abort_requested {
             if control.pending_terminal.is_none() {
                 control.child = None;
-                control.pending_terminal = Some(request);
+                control.pending_terminal = Some(resolved_request);
                 return RuntimeTerminalControlAction::Deferred;
             }
             return RuntimeTerminalControlAction::Ignore;
@@ -716,7 +721,7 @@ impl RuntimeBoundaryState {
 
         control.child = None;
         control.finalized = true;
-        RuntimeTerminalControlAction::Finalize(request)
+        RuntimeTerminalControlAction::Finalize(resolved_request)
     }
 
     fn resume_active_run_and_take_pending(
