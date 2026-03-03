@@ -9,7 +9,10 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tauri_plugin_shell::{
+    process::{CommandChild, CommandEvent},
+    ShellExt,
+};
 use tempfile::TempDir;
 
 const BRANCH_PREFIX: &str = "hostlocal";
@@ -387,9 +390,57 @@ pub struct RepositoryRuntimeQueue {
     pub queued_runs: VecDeque<RuntimeIssueRun>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeTerminalRequest {
+    terminal_status: RuntimeTerminalStatus,
+    reason_code: Option<String>,
+    fix_hint: Option<String>,
+    workspace_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeTerminalControlAction {
+    Finalize(RuntimeTerminalRequest),
+    Deferred,
+    Ignore,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeActiveRunControl {
+    child: Option<CommandChild>,
+    is_paused: bool,
+    pending_terminal: Option<RuntimeTerminalRequest>,
+    abort_requested: bool,
+    finalized: bool,
+}
+
+impl RuntimeActiveRunControl {
+    fn with_child(child: CommandChild) -> Self {
+        Self {
+            child: Some(child),
+            is_paused: false,
+            pending_terminal: None,
+            abort_requested: false,
+            finalized: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self {
+            child: None,
+            is_paused: false,
+            pending_terminal: None,
+            abort_requested: false,
+            finalized: false,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct RuntimeBoundaryState {
     repos: HashMap<String, RepositoryRuntimeQueue>,
+    active_controls: HashMap<i64, RuntimeActiveRunControl>,
 }
 
 #[derive(Default)]
@@ -485,6 +536,7 @@ impl RuntimeBoundaryState {
         queued_runs: Vec<RuntimeIssueRun>,
     ) -> Vec<RuntimeIssueRun> {
         self.repos.clear();
+        self.active_controls.clear();
         let mut active_runs = Vec::new();
 
         for queued_run in queued_runs {
@@ -499,6 +551,116 @@ impl RuntimeBoundaryState {
         }
 
         active_runs
+    }
+
+    fn register_active_run_control(&mut self, run_id: i64, child: CommandChild) {
+        self.active_controls
+            .insert(run_id, RuntimeActiveRunControl::with_child(child));
+    }
+
+    #[cfg(test)]
+    fn register_active_run_control_for_test(&mut self, run_id: i64) {
+        self.active_controls
+            .insert(run_id, RuntimeActiveRunControl::for_test());
+    }
+
+    fn clear_active_run_control(&mut self, run_id: i64) {
+        self.active_controls.remove(&run_id);
+    }
+
+    fn set_active_run_paused(&mut self, run_id: i64, is_paused: bool) -> Result<(), String> {
+        let control = self
+            .active_controls
+            .get_mut(&run_id)
+            .ok_or_else(|| "runtime active run control not found".to_string())?;
+        if control.finalized {
+            return Err("runtime active run already finalized".to_string());
+        }
+        control.is_paused = is_paused;
+        Ok(())
+    }
+
+    fn mark_active_run_abort_requested(&mut self, run_id: i64) -> Result<(), String> {
+        let control = self
+            .active_controls
+            .get_mut(&run_id)
+            .ok_or_else(|| "runtime active run control not found".to_string())?;
+        if control.finalized {
+            return Err("runtime active run already finalized".to_string());
+        }
+        control.abort_requested = true;
+        Ok(())
+    }
+
+    fn take_active_run_child(&mut self, run_id: i64) -> Option<CommandChild> {
+        self.active_controls
+            .get_mut(&run_id)
+            .and_then(|control| control.child.take())
+    }
+
+    fn write_active_run_child(&mut self, run_id: i64, input: &[u8]) -> Result<(), String> {
+        let control = self
+            .active_controls
+            .get_mut(&run_id)
+            .ok_or_else(|| "runtime active run control not found".to_string())?;
+        if control.finalized {
+            return Err("runtime active run already finalized".to_string());
+        }
+        let child = control
+            .child
+            .as_mut()
+            .ok_or_else(|| "runtime active run process handle unavailable".to_string())?;
+        child.write(input).map_err(|error| error.to_string())
+    }
+
+    fn active_run_is_paused(&self, run_id: i64) -> Option<bool> {
+        self.active_controls.get(&run_id).map(|control| control.is_paused)
+    }
+
+    fn plan_terminal_action(
+        &mut self,
+        run_id: i64,
+        request: RuntimeTerminalRequest,
+    ) -> RuntimeTerminalControlAction {
+        let Some(control) = self.active_controls.get_mut(&run_id) else {
+            return RuntimeTerminalControlAction::Finalize(request);
+        };
+        if control.finalized {
+            return RuntimeTerminalControlAction::Ignore;
+        }
+
+        if control.is_paused && !control.abort_requested {
+            if control.pending_terminal.is_none() {
+                control.child = None;
+                control.pending_terminal = Some(request);
+                return RuntimeTerminalControlAction::Deferred;
+            }
+            return RuntimeTerminalControlAction::Ignore;
+        }
+
+        control.child = None;
+        control.finalized = true;
+        RuntimeTerminalControlAction::Finalize(request)
+    }
+
+    fn resume_active_run_and_take_pending(
+        &mut self,
+        run_id: i64,
+    ) -> Result<Option<RuntimeTerminalRequest>, String> {
+        let control = self
+            .active_controls
+            .get_mut(&run_id)
+            .ok_or_else(|| "runtime active run control not found".to_string())?;
+        if control.finalized {
+            return Err("runtime active run already finalized".to_string());
+        }
+
+        control.is_paused = false;
+        if let Some(pending) = control.pending_terminal.take() {
+            control.finalized = true;
+            return Ok(Some(pending));
+        }
+        Ok(None)
     }
 
     #[cfg(test)]
@@ -2508,6 +2670,61 @@ fn finalize_workspace_cleanup(workspace_root: Option<&Path>) -> bool {
     true
 }
 
+fn clear_active_run_control_entry(app: &AppHandle, run_id: Option<i64>) {
+    let Some(run_id) = run_id else {
+        return;
+    };
+    let state = app.state::<RuntimeBoundarySharedState>();
+    let mut queue = match state.lock() {
+        Ok(queue) => queue,
+        Err(_) => return,
+    };
+    queue.clear_active_run_control(run_id);
+}
+
+fn plan_terminal_control_action(
+    app: &AppHandle,
+    run: &RuntimeIssueRun,
+    request: RuntimeTerminalRequest,
+) -> RuntimeTerminalControlAction {
+    let Some(run_id) = run.run_id else {
+        return RuntimeTerminalControlAction::Finalize(request);
+    };
+    let state = app.state::<RuntimeBoundarySharedState>();
+    let mut queue = match state.lock() {
+        Ok(queue) => queue,
+        Err(_) => return RuntimeTerminalControlAction::Finalize(request),
+    };
+    queue.plan_terminal_action(run_id, request)
+}
+
+fn finalize_run_with_control_gate(
+    app: &AppHandle,
+    run: RuntimeIssueRun,
+    workspace_root: Option<PathBuf>,
+    terminal_status: RuntimeTerminalStatus,
+    reason_code: Option<String>,
+    fix_hint: Option<String>,
+) {
+    let request = RuntimeTerminalRequest {
+        terminal_status,
+        reason_code,
+        fix_hint,
+        workspace_root,
+    };
+    match plan_terminal_control_action(app, &run, request) {
+        RuntimeTerminalControlAction::Finalize(request) => finalize_run(
+            app,
+            run,
+            request.workspace_root,
+            request.terminal_status,
+            request.reason_code,
+            request.fix_hint,
+        ),
+        RuntimeTerminalControlAction::Deferred | RuntimeTerminalControlAction::Ignore => {}
+    }
+}
+
 fn finalize_run(
     app: &AppHandle,
     run: RuntimeIssueRun,
@@ -2516,6 +2733,7 @@ fn finalize_run(
     reason_code: Option<String>,
     fix_hint: Option<String>,
 ) {
+    let run_id = run.run_id;
     let db_path = app.state::<DbPath>();
     if terminal_status == RuntimeTerminalStatus::Success {
         if let Ok(advanced_stages) = persist_advance_runtime_run_to_publishing(&db_path.0, &run) {
@@ -2551,6 +2769,7 @@ fn finalize_run(
     } else {
         let _ = record_terminal_evidence(&run, terminal_status, reason_code);
         let _ = finalize_workspace_cleanup(workspace_root.as_deref());
+        clear_active_run_control_entry(app, run_id);
         return;
     };
 
@@ -2571,6 +2790,9 @@ fn finalize_run(
             Ok(queue) => queue,
             Err(_) => return,
         };
+        if let Some(run_id) = run_id {
+            queue.clear_active_run_control(run_id);
+        }
         queue.finalize_active_and_promote_next(&run.repository_key, run.issue_number)
     };
 
@@ -2614,9 +2836,28 @@ fn spawn_sidecar_for_run(
         })?
         .current_dir(prepared.repository_path.clone());
 
-    let (mut receiver, _child) = command
+    let (mut receiver, child) = command
         .spawn()
         .map_err(|_| StartRunError::startup(Some(prepared.workspace_root.clone())))?;
+
+    let run_id = run
+        .run_id
+        .ok_or_else(|| StartRunError::startup(Some(prepared.workspace_root.clone())))?;
+    if run_id <= 0 {
+        let _ = child.kill();
+        return Err(StartRunError::startup(Some(prepared.workspace_root.clone())));
+    }
+    {
+        let state = app.state::<RuntimeBoundarySharedState>();
+        let mut queue = match state.lock() {
+            Ok(queue) => queue,
+            Err(_) => {
+                let _ = child.kill();
+                return Err(StartRunError::startup(Some(prepared.workspace_root.clone())));
+            }
+        };
+        queue.register_active_run_control(run_id, child);
+    }
 
     let app_handle = app.clone();
     let run_for_finalize = run.clone();
@@ -2658,7 +2899,7 @@ fn spawn_sidecar_for_run(
             }
         }
 
-        finalize_run(
+        finalize_run_with_control_gate(
             &app_handle,
             run_for_finalize,
             Some(workspace_for_finalize),
