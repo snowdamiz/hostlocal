@@ -4,7 +4,9 @@ import {
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubRevertIssueIntake,
+  runtimeDequeueIssueRun,
   runtimeEnqueueIssueRun,
+  type RuntimeDequeueIssueRunOutcome,
   type GithubIssueIntakeOutcome,
   type GithubRepository,
   type GithubRepositoryItem,
@@ -95,6 +97,28 @@ const toRuntimeRejectionOutcome = (outcome: RuntimeEnqueueIssueRunOutcome): Gith
   fixHint: outcome.fixHint ?? "Runtime startup failed before local worker execution could begin.",
 });
 
+export interface RevertIssueIntakeWithRuntimeDequeueInput {
+  repositoryFullName: string;
+  item: GithubRepositoryItem;
+  agentLabel: string;
+}
+
+export interface RevertIssueIntakeWithRuntimeDequeueDependencies {
+  runtimeDequeueIssueRun: typeof runtimeDequeueIssueRun;
+  githubRevertIssueIntake: typeof githubRevertIssueIntake;
+}
+
+const revertIssueIntakeWithRuntimeDequeueDependencies: RevertIssueIntakeWithRuntimeDequeueDependencies = {
+  runtimeDequeueIssueRun,
+  githubRevertIssueIntake,
+};
+
+const toRuntimeDequeueRejectionOutcome = (outcome: RuntimeDequeueIssueRunOutcome): GithubIssueIntakeOutcome => ({
+  accepted: false,
+  reasonCode: outcome.reasonCode ?? "runtime_queue_removal_failed",
+  fixHint: outcome.fixHint ?? "Runtime queue removal failed before moving this issue back to Todo.",
+});
+
 export async function startAgentRunForIssue(
   input: StartAgentRunForIssueInput,
   dependencies: StartAgentRunForIssueDependencies = startAgentRunForIssueDependencies,
@@ -130,6 +154,36 @@ export async function startAgentRunForIssue(
       ),
     });
   }
+}
+
+export async function revertIssueIntakeWithRuntimeDequeue(
+  input: RevertIssueIntakeWithRuntimeDequeueInput,
+  dependencies: RevertIssueIntakeWithRuntimeDequeueDependencies = revertIssueIntakeWithRuntimeDequeueDependencies,
+): Promise<GithubIssueIntakeOutcome> {
+  try {
+    const dequeueOutcome = await dependencies.runtimeDequeueIssueRun({
+      repositoryFullName: input.repositoryFullName,
+      issueNumber: input.item.number,
+    });
+    if (dequeueOutcome.status !== "removed") {
+      return toRuntimeDequeueRejectionOutcome(dequeueOutcome);
+    }
+  } catch (error) {
+    return {
+      accepted: false,
+      reasonCode: "runtime_queue_removal_failed",
+      fixHint: formatInvokeError(
+        error,
+        "Runtime queue removal failed before moving this issue back to Todo.",
+      ),
+    };
+  }
+
+  return dependencies.githubRevertIssueIntake({
+    repositoryFullName: input.repositoryFullName,
+    issueNumber: input.item.number,
+    agentLabel: input.agentLabel,
+  });
 }
 
 export function useBoardInteractions(
@@ -449,9 +503,9 @@ export function useBoardInteractions(
             issueNumber: item.number,
             agentLabel: DEFAULT_AGENT_LABEL,
           })
-        : await githubRevertIssueIntake({
+        : await revertIssueIntakeWithRuntimeDequeue({
             repositoryFullName: repository.fullName,
-            issueNumber: item.number,
+            item,
             agentLabel: DEFAULT_AGENT_LABEL,
           });
 

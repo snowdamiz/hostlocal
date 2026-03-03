@@ -5,7 +5,13 @@ export type IntakePolicyReasonCode =
   | "deny_signal_present"
   | "label_persist_failed"
   | "label_persist_rate_limited"
-  | "duplicate_intake_pending";
+  | "duplicate_intake_pending"
+  | "runtime_guardrail_workspace_boundary_path"
+  | "runtime_guardrail_command_scope_command"
+  | "runtime_startup_failed"
+  | "runtime_workspace_prepare_failed"
+  | "queued_run_not_found"
+  | "runtime_queue_removal_failed";
 
 export interface IntakePolicyReasonCopy {
   violatedRule: string;
@@ -52,6 +58,30 @@ export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, I
   duplicate_intake_pending: {
     violatedRule: "An intake attempt for this issue is already pending and unresolved.",
     fixHint: "Wait for the current intake attempt to resolve before trying again.",
+  },
+  runtime_guardrail_workspace_boundary_path: {
+    violatedRule: "Runtime blocked a path target outside the local workspace boundary.",
+    fixHint: "Retry after ensuring runtime file operations stay inside the run workspace.",
+  },
+  runtime_guardrail_command_scope_command: {
+    violatedRule: "Runtime blocked an unapproved command target before worker start.",
+    fixHint: "Retry with the approved local worker command scope.",
+  },
+  runtime_startup_failed: {
+    violatedRule: "Runtime failed before local worker execution could start.",
+    fixHint: "Retry after runtime startup dependencies are available.",
+  },
+  runtime_workspace_prepare_failed: {
+    violatedRule: "Runtime workspace preparation failed before local worker execution.",
+    fixHint: "Retry after repository clone and branch setup are available locally.",
+  },
+  queued_run_not_found: {
+    violatedRule: "Issue run was not queued, so runtime queue removal could not proceed.",
+    fixHint: "Retry after confirming the issue run is queued for this repository.",
+  },
+  runtime_queue_removal_failed: {
+    violatedRule: "Runtime queue removal failed before the issue could return to Todo.",
+    fixHint: "Retry after runtime queue operations are available.",
   },
 };
 
