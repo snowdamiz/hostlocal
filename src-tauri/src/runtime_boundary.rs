@@ -107,12 +107,32 @@ impl RuntimeBoundaryState {
             return RuntimeQueueOutcome::started();
         }
 
-        repository_state.queued_runs.push_front(run);
+        repository_state.queued_runs.push_back(run);
         RuntimeQueueOutcome::queued(repository_state.queued_runs.len())
     }
 
-    pub fn dequeue_queued_run(&mut self, _repository_key: &str, _issue_number: i64) -> bool {
-        false
+    pub fn dequeue_queued_run(&mut self, repository_key: &str, issue_number: i64) -> bool {
+        let Some(repository_state) = self.repos.get_mut(repository_key) else {
+            return false;
+        };
+
+        if repository_state
+            .active_run
+            .as_ref()
+            .is_some_and(|run| run.issue_number == issue_number)
+        {
+            return false;
+        }
+
+        let Some(position) = repository_state
+            .queued_runs
+            .iter()
+            .position(|run| run.issue_number == issue_number)
+        else {
+            return false;
+        };
+
+        repository_state.queued_runs.remove(position).is_some()
     }
 
     pub fn repository_queue(&self, repository_key: &str) -> Option<&RepositoryRuntimeQueue> {
@@ -121,21 +141,60 @@ impl RuntimeBoundaryState {
 }
 
 pub fn normalize_repository_key(repository_full_name: &str) -> Option<String> {
-    let normalized = repository_full_name.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
+    let raw = repository_full_name.trim();
+    if raw.is_empty() {
         return None;
     }
 
-    Some(normalized)
+    let mut segments = raw.split('/');
+    let owner = segments.next()?.trim();
+    let repository = segments.next()?.trim();
+    if owner.is_empty() || repository.is_empty() || segments.next().is_some() {
+        return None;
+    }
+
+    Some(format!(
+        "{}/{}",
+        owner.to_ascii_lowercase(),
+        repository.to_ascii_lowercase()
+    ))
 }
 
 pub fn sanitize_branch_slug(issue_title: &str) -> String {
-    let normalized = issue_title.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
+    let mut slug = String::with_capacity(issue_title.len());
+    let mut previous_was_separator = true;
+
+    for ch in issue_title.chars() {
+        let is_separator = !ch.is_ascii_alphanumeric();
+        if is_separator {
+            if !previous_was_separator {
+                slug.push('-');
+                previous_was_separator = true;
+            }
+            continue;
+        }
+
+        slug.push(ch.to_ascii_lowercase());
+        previous_was_separator = false;
+    }
+
+    let trimmed = slug.trim_matches('-').to_string();
+    if trimmed.is_empty() {
         return "run".to_string();
     }
 
-    normalized
+    const MAX_SLUG_LEN: usize = 48;
+    let mut bounded = trimmed;
+    if bounded.len() > MAX_SLUG_LEN {
+        bounded.truncate(MAX_SLUG_LEN);
+        bounded = bounded.trim_end_matches('-').to_string();
+    }
+
+    if bounded.is_empty() {
+        return "run".to_string();
+    }
+
+    bounded
 }
 
 pub fn issue_branch_name(issue_number: i64, issue_title: &str) -> String {
