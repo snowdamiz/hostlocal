@@ -3675,6 +3675,158 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_issue_telemetry_enforces_newest_first_limit_for_selected_run() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4022;
+        let run = build_run("owner/repo", issue_number, "Telemetry ordering");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "queued",
+            "first",
+            true,
+        )
+        .expect("insert first");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "preparing",
+            "second",
+            true,
+        )
+        .expect("insert second");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "coding",
+            "third",
+            true,
+        )
+        .expect("insert third");
+
+        let telemetry = runtime_get_issue_run_telemetry_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            Some(persisted.run_id),
+            Some(2),
+        )
+        .expect("load telemetry");
+
+        assert_eq!(telemetry.events.len(), 2);
+        assert_eq!(telemetry.events[0].message, "third");
+        assert_eq!(telemetry.events[1].message, "second");
+    }
+
+    #[test]
+    fn runtime_boundary_issue_telemetry_redacts_legacy_unsanitized_rows_on_read() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4023;
+        let run = build_run("owner/repo", issue_number, "Legacy telemetry sanitization");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        conn.execute(
+            "INSERT INTO runtime_run_events (
+                run_id,
+                sequence,
+                kind,
+                stage,
+                message,
+                redaction_reasons,
+                include_in_summary
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                persisted.run_id,
+                1_i64,
+                "milestone",
+                "queued",
+                "Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+                "[]",
+                1_i64
+            ],
+        )
+        .expect("insert legacy unsanitized event");
+
+        let telemetry = runtime_get_issue_run_telemetry_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            Some(persisted.run_id),
+            Some(10),
+        )
+        .expect("load telemetry");
+        assert_eq!(telemetry.events.len(), 1);
+        assert!(
+            !telemetry.events[0]
+                .message
+                .contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+            "telemetry payload should not expose raw secret fragments from legacy rows"
+        );
+        assert!(
+            telemetry.events[0].message.contains("[REDACTED]"),
+            "telemetry payload should preserve masked marker after read sanitization"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_issue_summary_redacts_legacy_unsanitized_key_actions() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4024;
+        let run = build_run("owner/repo", issue_number, "Legacy summary sanitization");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        conn.execute(
+            "INSERT INTO runtime_run_events (
+                run_id,
+                sequence,
+                kind,
+                stage,
+                message,
+                redaction_reasons,
+                include_in_summary
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                persisted.run_id,
+                1_i64,
+                "milestone",
+                "queued",
+                "api_key=raw-secret-value",
+                "[]",
+                1_i64
+            ],
+        )
+        .expect("insert legacy unsanitized summary action");
+
+        let summary = runtime_get_issue_run_summary_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            Some(persisted.run_id),
+        )
+        .expect("load summary");
+
+        assert_eq!(summary.key_actions.len(), 1);
+        assert!(
+            !summary.key_actions[0]
+                .message
+                .contains("api_key=raw-secret-value"),
+            "summary key actions should not expose raw secret fragments from legacy rows"
+        );
+        assert!(
+            summary.key_actions[0].message.contains("[REDACTED]"),
+            "summary key actions should preserve masked marker after read sanitization"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_milestone_templates_cover_lifecycle_checkpoints() {
         let checkpoints = [
             (
