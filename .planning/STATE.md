@@ -2,13 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-03T18:06:30Z"
+current_phase: 06
+current_phase_name: In-Run User Control
+current_plan: 4
+status: executing
+stopped_at: Completed 06-in-run-user-control-03-PLAN.md
+last_updated: "2026-03-03T18:24:16.028Z"
+last_activity: 2026-03-03
 progress:
-  total_phases: 7
+  total_phases: 10
   completed_phases: 5
   total_plans: 22
   completed_plans: 21
+  percent: 95
 ---
 
 # Project State
@@ -22,14 +28,18 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 
 ## Current Position
 
-Phase: 06 of 10 (In-Run User Control)
-Plan: 03 of 04 (next: 06-03-PLAN.md)
-Current Plan: 3
-Total Plans in Phase: 4
-Status: In Progress
-Last activity: 2026-03-03 — Completed 06-01 backend runtime control plane primitives.
+**Current Phase:** 06
+**Current Phase Name:** In-Run User Control
+**Total Phases:** 10
+**Phase:** 06 of 10 (In-Run User Control)
+**Plan:** 04 of 04 (next: 06-04-PLAN.md)
+**Current Plan:** 4
+**Total Plans in Phase:** 4
+**Status:** Ready to execute
+**Last Activity:** 2026-03-03
+**Last Activity Description:** Completed 06-03 frontend runtime control contracts, hook orchestration, and reason-code mapping.
 
-Progress: [██████░░░░] 60%
+**Progress:** [██████████] 95%
 
 ## Performance Metrics
 
@@ -67,6 +77,7 @@ Progress: [██████░░░░] 60%
 | Phase 05-live-telemetry-and-safe-summaries P03 | 7 min | 3 tasks | 5 files |
 | Phase 06-in-run-user-control P02 | 3m 4s | 2 tasks | 5 files |
 | Phase 06-in-run-user-control P01 | 19 min | 3 tasks | 3 files |
+| Phase 06-in-run-user-control P03 | 6m 38s | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -124,6 +135,9 @@ Recent decisions affecting current work:
 - [Phase 06-in-run-user-control]: Persist pause state as metadata (is_paused, paused_at) instead of introducing a new stage value.
 - [Phase 06-in-run-user-control]: Use active-run control registry arbitration so paused runs defer terminal finalization and duplicate terminal races are ignored.
 - [Phase 06-in-run-user-control]: Standardize pause/resume/abort/steer responses on RuntimeRunControlOutcome with explicit acknowledged/rejected semantics.
+- [Phase 06-in-run-user-control]: Frontend command contracts mirror backend runtime control outcomes and paused metadata fields.
+- [Phase 06-in-run-user-control]: Board control orchestration uses a shared selected-issue executor for consistent gating, refresh hydration, and runtime-control toast acknowledgements.
+- [Phase 06-in-run-user-control]: Runtime control reason codes resolve through INTAKE_POLICY_REASON_MAP to keep panel and toast reasonCode/fixHint messaging consistent.
 
 ### Roadmap Evolution
 
@@ -139,6 +153,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 13:06
-Stopped at: Completed 06-in-run-user-control-01-PLAN.md
-Resume file: .planning/phases/06-in-run-user-control/06-03-PLAN.md
+**Last session:** 2026-03-03T18:22:57.359Z
+**Stopped At:** Completed 06-in-run-user-control-03-PLAN.md
+**Resume File:** .planning/phases/06-in-run-user-control/06-04-PLAN.md
