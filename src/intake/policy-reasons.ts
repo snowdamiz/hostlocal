@@ -12,7 +12,20 @@ export type IntakePolicyReasonCode =
   | "runtime_workspace_prepare_failed"
   | "runtime_recovery_process_lost"
   | "queued_run_not_found"
-  | "runtime_queue_removal_failed";
+  | "runtime_queue_removal_failed"
+  | "invalid_runtime_request"
+  | "runtime_control_lookup_failed"
+  | "runtime_run_not_found"
+  | "runtime_pause_not_active"
+  | "runtime_resume_not_active"
+  | "runtime_run_not_paused"
+  | "runtime_abort_not_active"
+  | "runtime_user_abort"
+  | "runtime_steer_empty_instruction"
+  | "runtime_steer_not_active"
+  | "runtime_steer_paused"
+  | "runtime_steer_delivery_failed"
+  | "runtime_control_command_failed";
 
 export interface IntakePolicyReasonCopy {
   violatedRule: string;
@@ -87,6 +100,58 @@ export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, I
   runtime_queue_removal_failed: {
     violatedRule: "Runtime queue removal failed before the issue could return to Todo.",
     fixHint: "Retry after runtime queue operations are available.",
+  },
+  invalid_runtime_request: {
+    violatedRule: "Runtime control request was invalid for the selected issue scope.",
+    fixHint: "Re-select the issue from the board, then retry the control action.",
+  },
+  runtime_control_lookup_failed: {
+    violatedRule: "Runtime control lookup failed before the action could be applied.",
+    fixHint: "Retry after local runtime state is available and responsive.",
+  },
+  runtime_run_not_found: {
+    violatedRule: "No active runtime run was found for the selected issue.",
+    fixHint: "Move the issue back to In Progress to queue a fresh run before retrying controls.",
+  },
+  runtime_pause_not_active: {
+    violatedRule: "Pause is only allowed for active runs that are currently executing.",
+    fixHint: "Wait for the run to start execution, then retry pause.",
+  },
+  runtime_resume_not_active: {
+    violatedRule: "Resume is only allowed for active paused runs.",
+    fixHint: "Pause an active run first, then retry resume.",
+  },
+  runtime_run_not_paused: {
+    violatedRule: "Resume was requested while the run was already active.",
+    fixHint: "No resume is needed; wait for the run to continue or pause it first.",
+  },
+  runtime_abort_not_active: {
+    violatedRule: "Abort is only allowed for active or paused runs.",
+    fixHint: "Abort queued runs by returning the issue to Todo instead.",
+  },
+  runtime_user_abort: {
+    violatedRule: "Run execution was cancelled by explicit user abort request.",
+    fixHint: "Move the issue back to In Progress to queue a fresh retry if work should continue.",
+  },
+  runtime_steer_empty_instruction: {
+    violatedRule: "Steering instruction text cannot be empty.",
+    fixHint: "Enter a concrete instruction before sending steering.",
+  },
+  runtime_steer_not_active: {
+    violatedRule: "Steering is only allowed while a run is actively executing.",
+    fixHint: "Wait for active execution or requeue the issue before steering.",
+  },
+  runtime_steer_paused: {
+    violatedRule: "Steering cannot be sent while the run is paused.",
+    fixHint: "Resume the run before sending steering instructions.",
+  },
+  runtime_steer_delivery_failed: {
+    violatedRule: "Steering delivery to the active worker process failed.",
+    fixHint: "Retry steering after runtime process connectivity is restored.",
+  },
+  runtime_control_command_failed: {
+    violatedRule: "Runtime control command failed before acknowledgement was received.",
+    fixHint: "Retry after local runtime command connectivity is restored.",
   },
 };
 
