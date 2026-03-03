@@ -2905,6 +2905,17 @@ mod tests {
         .expect("valid runtime issue run")
     }
 
+    fn build_run_with_id(
+        repository: &str,
+        issue_number: i64,
+        title: &str,
+        run_id: i64,
+    ) -> RuntimeIssueRun {
+        let mut run = build_run(repository, issue_number, title);
+        run.run_id = Some(run_id);
+        run
+    }
+
     fn runtime_schema_test_connection() -> Connection {
         let conn = Connection::open_in_memory().expect("open in-memory sqlite");
         initialize_schema(&conn).expect("initialize sqlite schema");
@@ -4487,6 +4498,72 @@ https://example.com/callback?access_token=my-token-value";
         assert_eq!(repo_queue.queued_runs.len(), 2);
         assert_eq!(repo_queue.queued_runs[0].issue_number, 102);
         assert_eq!(repo_queue.queued_runs[1].issue_number, 103);
+    }
+
+    #[test]
+    fn runtime_boundary_control_registry_defers_terminal_finalize_while_paused() {
+        let mut state = RuntimeBoundaryState::default();
+        let run = build_run_with_id("owner/repo", 7101, "Paused control run", 7101);
+        assert_eq!(state.enqueue_run(run.clone()), RuntimeQueueOutcome::started());
+
+        state.register_active_run_control_for_test(run.run_id.expect("run id"));
+        state
+            .set_active_run_paused(run.run_id.expect("run id"), true)
+            .expect("pause active run");
+
+        let action = state.plan_terminal_action(
+            run.run_id.expect("run id"),
+            RuntimeTerminalRequest {
+                terminal_status: RuntimeTerminalStatus::Success,
+                reason_code: None,
+                fix_hint: None,
+                workspace_root: None,
+            },
+        );
+        assert_eq!(action, RuntimeTerminalControlAction::Deferred);
+
+        let pending = state
+            .resume_active_run_and_take_pending(run.run_id.expect("run id"))
+            .expect("resume should return pending terminal");
+        assert!(pending.is_some());
+        assert_eq!(
+            pending.expect("pending terminal").terminal_status,
+            RuntimeTerminalStatus::Success
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_control_registry_ignores_duplicate_terminal_finalization_races() {
+        let mut state = RuntimeBoundaryState::default();
+        let run = build_run_with_id("owner/repo", 7102, "Race control run", 7102);
+        assert_eq!(state.enqueue_run(run.clone()), RuntimeQueueOutcome::started());
+
+        state.register_active_run_control_for_test(run.run_id.expect("run id"));
+
+        let first = state.plan_terminal_action(
+            run.run_id.expect("run id"),
+            RuntimeTerminalRequest {
+                terminal_status: RuntimeTerminalStatus::Cancelled,
+                reason_code: Some("runtime_user_abort".to_string()),
+                fix_hint: Some("Issue run was cancelled by user request.".to_string()),
+                workspace_root: None,
+            },
+        );
+        assert!(matches!(
+            first,
+            RuntimeTerminalControlAction::Finalize(_)
+        ));
+
+        let duplicate = state.plan_terminal_action(
+            run.run_id.expect("run id"),
+            RuntimeTerminalRequest {
+                terminal_status: RuntimeTerminalStatus::Failed,
+                reason_code: Some("runtime_worker_failed".to_string()),
+                fix_hint: Some("Retry after fixing the worker error.".to_string()),
+                workspace_root: None,
+            },
+        );
+        assert_eq!(duplicate, RuntimeTerminalControlAction::Ignore);
     }
 
     #[test]
