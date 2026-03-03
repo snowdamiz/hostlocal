@@ -16,6 +16,8 @@ html {
   --error-bg: #3b2527;
   --error-border: #5f3539;
   --error-text: #f5c3c5;
+  --setup-spinner-track: var(--surface-border);
+  --setup-spinner-accent: var(--surface-light);
   --syntax-text: var(--text-primary);
   --syntax-comment: var(--text-muted);
   --syntax-keyword: var(--text-secondary);
@@ -50,10 +52,17 @@ html {
   --kanban-drag-ghost-bg: var(--surface-dark);
   --kanban-drag-ghost-border: var(--surface-light);
   --kanban-drag-ghost-shadow: var(--sidebar-shadow-dark);
+  --window-control-macos-close: #ff5f57;
+  --window-control-macos-close-border: #d94d48;
+  --window-control-macos-minimize: #febc2e;
+  --window-control-macos-minimize-border: #d99f24;
+  --window-control-macos-maximize: #28c840;
+  --window-control-macos-maximize-border: #26a639;
+  --window-control-non-macos-close-bg: #c42b1c;
+  --window-control-non-macos-close-text: #ffffff;
 }
 
 
 html[data-platform="macos"] {
   --app-radius: 16px;
 }
-
