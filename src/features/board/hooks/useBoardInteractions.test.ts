@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GithubIssueIntakeOutcome,
   GithubRepositoryItem,
+  RuntimeIssueRunSummary,
   RuntimeIssueRunTelemetry,
   RuntimeRepositoryRunSnapshot,
   RuntimeRunTelemetryEventPayload,
@@ -14,6 +15,7 @@ import {
   mapRuntimeTelemetryByIssueNumber,
   mergeRuntimeTelemetryPayloadByIssueNumber,
   mergeRuntimeStageChangedPayload,
+  normalizeRuntimeIssueRunSummary,
   revertIssueIntakeWithRuntimeDequeue,
   startAgentRunForIssue,
   subscribeRuntimeTelemetryEvents,
@@ -152,6 +154,32 @@ const createRuntimeTelemetryReplay = (): RuntimeIssueRunTelemetry => ({
       stage: "preparing",
     }),
   ],
+});
+
+const createRuntimeSummary = (
+  overrides: Partial<RuntimeIssueRunSummary> = {},
+): RuntimeIssueRunSummary => ({
+  repositoryFullName: "Owner/Repo",
+  repositoryKey: "owner/repo",
+  issueNumber: 42,
+  runId: 101,
+  completion: {
+    status: "success",
+    terminalAt: "2026-03-03T05:05:00.000Z",
+  },
+  keyActions: [
+    {
+      kind: "milestone",
+      stage: "coding",
+      message: "Implemented sidebar telemetry sections.",
+      createdAt: "2026-03-03T05:03:00.000Z",
+    },
+  ],
+  validationOutcomes: {
+    code: "pass",
+    browser: "pass",
+  },
+  ...overrides,
 });
 
 describe("startAgentRunForIssue", () => {
@@ -416,6 +444,58 @@ describe("runtime telemetry helpers", () => {
     expect(merged[42]?.find((event) => event.eventId === 1002)?.message).toBe("Prepared workspace v2.");
   });
 
+  it("keeps terminal telemetry entries visible when newer merge updates arrive", () => {
+    const withTerminal = mergeRuntimeTelemetryPayloadByIssueNumber(
+      {},
+      createRuntimeTelemetryPayload({
+        eventId: 1100,
+        sequence: 5,
+        stage: "publishing",
+        message: "Run completed with success.",
+      }),
+    );
+
+    const merged = mergeRuntimeTelemetryPayloadByIssueNumber(
+      withTerminal,
+      createRuntimeTelemetryPayload({
+        eventId: 1101,
+        sequence: 4,
+        stage: "validating",
+        message: "Validation checks finished.",
+      }),
+    );
+
+    expect(merged[42]?.map((event) => event.sequence)).toEqual([5, 4]);
+    expect(merged[42]?.[0]?.message).toBe("Run completed with success.");
+  });
+
+  it("keeps repeated same-event merges deterministic for the selected issue", () => {
+    const replay = createRuntimeTelemetryReplay();
+    const initial = mapRuntimeTelemetryByIssueNumber(replay);
+
+    const mergedA = mergeRuntimeTelemetryPayloadByIssueNumber(
+      initial,
+      createRuntimeTelemetryPayload({
+        issueNumber: 42,
+        eventId: 1003,
+        sequence: 3,
+        message: "Published run evidence.",
+      }),
+    );
+    const mergedB = mergeRuntimeTelemetryPayloadByIssueNumber(
+      mergedA,
+      createRuntimeTelemetryPayload({
+        issueNumber: 42,
+        eventId: 1003,
+        sequence: 3,
+        message: "Published run evidence.",
+      }),
+    );
+
+    expect(mergedA[42]).toEqual(mergedB[42]);
+    expect(mergedB[42]?.map((event) => event.eventId)).toEqual([1003, 1002, 1001]);
+  });
+
   it("subscribes to runtime telemetry events and filters non-selected repositories", async () => {
     const unlisten = vi.fn();
     let handler: ((event: { payload: RuntimeRunTelemetryEventPayload }) => void) | null = null;
@@ -450,5 +530,43 @@ describe("runtime telemetry helpers", () => {
       }),
     );
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runtime summary normalization", () => {
+  it("uses not-run fallback when validation outcomes are absent and no validation actions exist", () => {
+    const normalized = normalizeRuntimeIssueRunSummary({
+      ...createRuntimeSummary(),
+      validationOutcomes: undefined as unknown as RuntimeIssueRunSummary["validationOutcomes"],
+    });
+
+    expect(normalized.validationOutcomes).toEqual({
+      code: "not-run",
+      browser: "not-run",
+    });
+  });
+
+  it("uses not-found fallback when validation actions exist but statuses are missing", () => {
+    const normalized = normalizeRuntimeIssueRunSummary({
+      ...createRuntimeSummary({
+        keyActions: [
+          {
+            kind: "validation",
+            stage: "validating",
+            message: "Validation completed without explicit status metadata.",
+            createdAt: "2026-03-03T05:04:00.000Z",
+          },
+        ],
+      }),
+      validationOutcomes: {
+        code: "unknown" as RuntimeIssueRunSummary["validationOutcomes"]["code"],
+        browser: "" as RuntimeIssueRunSummary["validationOutcomes"]["browser"],
+      },
+    });
+
+    expect(normalized.validationOutcomes).toEqual({
+      code: "not-found",
+      browser: "not-found",
+    });
   });
 });
