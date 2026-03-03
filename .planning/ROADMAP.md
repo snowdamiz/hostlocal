@@ -49,14 +49,15 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal:** Existing board and intake workflows remain behaviorally stable while monolithic renderer concerns are split into feature modules and styling is migrated to token-driven Tailwind v4 patterns.
 **Requirements**: STYLE-01
 **Depends on:** Phase 2
-**Plans:** 5/5 plans complete
+**Plans:** 6/6 plans complete
 
 Plans:
 - [x] 02.1-01-PLAN.md - Tailwind v4 setup plus token/legacy-bridge style layering foundation. (completed 2026-03-03)
 - [x] 02.1-02-PLAN.md - Extract parser and column inference logic from MainLayout into tested feature modules. (completed 2026-03-03)
 - [x] 02.1-03-PLAN.md - Extract GitHub auth and repository concerns into dedicated feature hooks/components. (completed 2026-03-03)
 - [x] 02.1-04-PLAN.md - Extract board canvas, drag/intake orchestration, and issue panel rendering from MainLayout. (completed 2026-03-03)
-- [ ] 02.1-05-PLAN.md - Finish major surface Tailwind migration and add automated anti-regression lint/style guardrails.
+- [x] 02.1-05-PLAN.md - Finish major surface Tailwind migration and add automated anti-regression lint/style guardrails. (completed 2026-03-03)
+- [x] 02.1-06-PLAN.md - Complete final layout/sidebar/auth Tailwind migration and reduce bridge CSS to compatibility-only scope. (completed 2026-03-03)
 
 ### Phase 3: Local Worker Runtime Boundary
 **Goal**: Every accepted run executes locally in an isolated, ephemeral workspace with constrained sidecar execution.
@@ -140,7 +141,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 |-------|----------------|--------|-----------|
 | 1. Tailwind v4 Styling Foundation | 0/TBD | Not started | - |
 | 2. Policy-Gated Issue Intake | 3/3 | Complete | 2026-03-02 |
-| 02.1. Production Standards Refactor (INSERTED) | 5/5 | Complete   | 2026-03-03 |
+| 02.1. Production Standards Refactor (INSERTED) | 6/6 | Complete   | 2026-03-03 |
 | 3. Local Worker Runtime Boundary | 0/TBD | Not started | - |
 | 4. Deterministic Run State Engine | 0/TBD | Not started | - |
 | 5. Live Telemetry and Safe Summaries | 0/TBD | Not started | - |
