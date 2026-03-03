@@ -66,6 +66,10 @@ Each task was committed atomically:
 
 _Note: TDD tasks include RED test commits and GREEN implementation commits._
 
+**Plan metadata:**
+- `dd9faa7` (docs)
+- `4e4705e` (docs)
+
 ## Files Created/Modified
 - `src-tauri/src/db.rs` - Added runtime run/transition schema objects and query indexes for queue order and issue history retrieval.
 - `src-tauri/src/runtime_boundary.rs` - Added transactional persistence helpers, stage transition guardrails, durable terminal metadata writes, and retention/history tests.
