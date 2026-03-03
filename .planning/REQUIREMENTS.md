@@ -49,7 +49,7 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 ### Observability
 
 - [x] **OBS-01**: User can watch live run activity/events in the existing right sidebar.
-- [ ] **OBS-02**: User can review final run summary including key actions, validation outcomes, and completion status.
+- [x] **OBS-02**: User can review final run summary including key actions, validation outcomes, and completion status.
 
 ### Security
 
@@ -105,7 +105,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GIT-03 | Phase 9 | Pending |
 | GIT-04 | Phase 9 | Pending |
 | OBS-01 | Phase 5 | Complete |
-| OBS-02 | Phase 5 | Pending |
+| OBS-02 | Phase 5 | Complete |
 | SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 3 | Complete |
 
