@@ -48,12 +48,12 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Observability
 
-- [ ] **OBS-01**: User can watch live run activity/events in the existing right sidebar.
+- [x] **OBS-01**: User can watch live run activity/events in the existing right sidebar.
 - [ ] **OBS-02**: User can review final run summary including key actions, validation outcomes, and completion status.
 
 ### Security
 
-- [ ] **SEC-01**: User tokens/secrets remain in OS secure storage and are never exposed in run logs or UI event streams.
+- [x] **SEC-01**: User tokens/secrets remain in OS secure storage and are never exposed in run logs or UI event streams.
 - [x] **SEC-02**: Sidecar execution is restricted by explicit command/path permissions to the run workspace boundary.
 
 ## v2 Requirements
@@ -104,9 +104,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GIT-02 | Phase 8 | Pending |
 | GIT-03 | Phase 9 | Pending |
 | GIT-04 | Phase 9 | Pending |
-| OBS-01 | Phase 5 | Pending |
+| OBS-01 | Phase 5 | Complete |
 | OBS-02 | Phase 5 | Pending |
-| SEC-01 | Phase 5 | Pending |
+| SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 3 | Complete |
 
 **Coverage:**

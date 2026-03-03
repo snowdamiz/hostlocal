@@ -99,7 +99,12 @@ Plans:
   2. User can view a final run summary containing key actions, validation outcomes, and completion status.
   3. Logs and event streams shown in the UI never expose tokens or secrets.
   4. Run execution continues to use secure stored credentials without requiring plaintext credential handling.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [x] 05-01-PLAN.md - Create secure backend telemetry redaction, persistence, and lifecycle emission foundation. (completed 2026-03-03)
+- [ ] 05-02-PLAN.md - Extend runtime command/event contracts and UI state for live telemetry feed hydration.
+- [ ] 05-03-PLAN.md - Render telemetry feed and final summary surfaces in issue details panel.
 
 ### Phase 6: In-Run User Control
 **Goal**: Users can intervene in active runs with pause, resume, abort, and steering actions.
@@ -154,7 +159,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 02.1. Production Standards Refactor (INSERTED) | 6/6 | Complete    | 2026-03-03 |
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
-| 5. Live Telemetry and Safe Summaries | 0/TBD | Not started | - |
+| 5. Live Telemetry and Safe Summaries | 1/3 | In Progress | - |
 | 6. In-Run User Control | 0/TBD | Not started | - |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
