@@ -223,20 +223,46 @@ pub fn runtime_enqueue_issue_run_inner(
     state: &RuntimeBoundarySharedState,
     request: RuntimeEnqueueIssueRunRequest,
 ) -> Result<RuntimeQueueOutcome, String> {
-    let _guard = state.lock()?;
-    let _ = request;
-    Ok(RuntimeQueueOutcome::not_found(
-        "runtime_queue_unavailable",
-        "Runtime queue is unavailable. Retry in a moment.",
-    ))
+    let Some(run) = create_runtime_issue_run(request) else {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before starting a run.",
+        ));
+    };
+
+    let outcome = {
+        let mut queue = state.lock()?;
+        queue.enqueue_run(run)
+    };
+    Ok(outcome)
 }
 
 pub fn runtime_dequeue_issue_run_inner(
     state: &RuntimeBoundarySharedState,
     request: RuntimeDequeueIssueRunRequest,
 ) -> Result<RuntimeQueueOutcome, String> {
-    let _guard = state.lock()?;
-    let _ = request;
+    let Some(repository_key) = normalize_repository_key(&request.repository_full_name) else {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before removing a queued run.",
+        ));
+    };
+
+    if request.issue_number <= 0 {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before removing a queued run.",
+        ));
+    }
+
+    let removed = {
+        let mut queue = state.lock()?;
+        queue.dequeue_queued_run(&repository_key, request.issue_number)
+    };
+    if removed {
+        return Ok(RuntimeQueueOutcome::removed());
+    }
+
     Ok(RuntimeQueueOutcome::not_found(
         "queued_run_not_found",
         "Issue run was not queued for this repository.",
