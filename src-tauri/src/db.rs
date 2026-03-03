@@ -97,3 +97,63 @@ where
     initialize_schema(&conn).map_err(|e| e.to_string())?;
     operation(&conn).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sqlite_column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(format!("PRAGMA table_info({table_name})").as_str())
+            .expect("prepare pragma table_info");
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query pragma table_info")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect pragma table_info rows");
+        columns.iter().any(|column| column == column_name)
+    }
+
+    #[test]
+    fn runtime_boundary_schema_migration_adds_paused_columns_for_existing_runtime_runs_table() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
+        conn.execute_batch(
+            "
+            CREATE TABLE runtime_runs (
+                run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repository_key TEXT NOT NULL,
+                repository_full_name TEXT NOT NULL,
+                issue_number INTEGER NOT NULL,
+                issue_title TEXT NOT NULL,
+                issue_branch_name TEXT NOT NULL,
+                queue_order INTEGER NOT NULL,
+                stage TEXT NOT NULL CHECK(stage IN ('queued', 'preparing', 'coding', 'validating', 'publishing')),
+                terminal_status TEXT CHECK(terminal_status IN ('success', 'failed', 'cancelled', 'guardrail_blocked')),
+                reason_code TEXT,
+                fix_hint TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                terminal_at TEXT
+            );
+            ",
+        )
+        .expect("create legacy runtime_runs table");
+        assert!(!sqlite_column_exists(&conn, "runtime_runs", "is_paused"));
+        assert!(!sqlite_column_exists(&conn, "runtime_runs", "paused_at"));
+
+        initialize_schema(&conn).expect("initialize schema with migration");
+
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "is_paused"));
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "paused_at"));
+    }
+
+    #[test]
+    fn runtime_boundary_schema_migration_is_idempotent_for_paused_columns() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
+        initialize_schema(&conn).expect("initialize schema");
+        initialize_schema(&conn).expect("initialize schema second time");
+
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "is_paused"));
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "paused_at"));
+    }
+}

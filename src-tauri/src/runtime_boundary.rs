@@ -4080,7 +4080,15 @@ mod tests {
         .expect("preparing -> coding");
 
         let queued_run = build_run("owner/repo", 4302, "Queued");
-        let _queued_persisted = insert_runtime_run(&conn, &queued_run).expect("persist queued run");
+        let queued_persisted = insert_runtime_run(&conn, &queued_run).expect("persist queued run");
+        conn.execute(
+            "UPDATE runtime_runs
+             SET is_paused = 1,
+                 paused_at = '2026-03-03T12:00:00Z'
+             WHERE run_id = ?1",
+            [queued_persisted.run_id],
+        )
+        .expect("mark queued run paused");
 
         let terminal_run = build_run("owner/repo", 4303, "Terminal");
         let terminal_persisted =
@@ -4115,6 +4123,8 @@ mod tests {
         let queued = by_issue.get(&4302).expect("queued issue entry");
         assert_eq!(queued.stage, "queued");
         assert_eq!(queued.queue_position, Some(1));
+        assert!(queued.is_paused);
+        assert_eq!(queued.paused_at.as_deref(), Some("2026-03-03T12:00:00Z"));
         assert_eq!(queued.terminal_status, None);
 
         let terminal = by_issue.get(&4303).expect("terminal issue entry");
@@ -4181,6 +4191,30 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_issue_history_exposes_paused_state_metadata() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4402, "Paused history");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+        conn.execute(
+            "UPDATE runtime_runs
+             SET is_paused = 1,
+                 paused_at = '2026-03-03T12:15:00Z'
+             WHERE run_id = ?1",
+            [persisted.run_id],
+        )
+        .expect("mark persisted run paused");
+
+        let history = runtime_get_issue_run_history_inner(&conn, "owner/repo", "Owner/Repo", 4402)
+            .expect("load history");
+        assert_eq!(history.runs.len(), 1);
+        assert!(history.runs[0].is_paused);
+        assert_eq!(
+            history.runs[0].paused_at.as_deref(),
+            Some("2026-03-03T12:15:00Z")
+        );
+    }
+
+    #[test]
     fn runtime_boundary_stage_event_payload_includes_repository_stage_and_queue_position() {
         let conn = runtime_schema_test_connection();
         let first = build_run("owner/repo", 4501, "First queued");
@@ -4188,6 +4222,14 @@ mod tests {
 
         let _first_persisted = insert_runtime_run(&conn, &first).expect("persist first run");
         let second_persisted = insert_runtime_run(&conn, &second).expect("persist second run");
+        conn.execute(
+            "UPDATE runtime_runs
+             SET is_paused = 1,
+                 paused_at = '2026-03-03T12:30:00Z'
+             WHERE run_id = ?1",
+            [second_persisted.run_id],
+        )
+        .expect("mark second run paused");
 
         let payload = runtime_stage_changed_event_payload_inner(&conn, second_persisted.run_id)
             .expect("build stage event payload");
@@ -4195,6 +4237,8 @@ mod tests {
         assert_eq!(payload.issue_number, 4502);
         assert_eq!(payload.stage, "queued");
         assert_eq!(payload.queue_position, Some(2));
+        assert!(payload.is_paused);
+        assert_eq!(payload.paused_at.as_deref(), Some("2026-03-03T12:30:00Z"));
     }
 
     #[test]
