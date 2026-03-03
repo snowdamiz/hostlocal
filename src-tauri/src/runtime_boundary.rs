@@ -3251,6 +3251,239 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_issue_summary_includes_completion_and_summary_actions() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4019;
+        let run = build_run("owner/repo", issue_number, "Summary contract");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            Some(RuntimeRunStage::Preparing),
+            None,
+            None,
+            None,
+        )
+        .expect("queued -> preparing");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Preparing,
+            Some(RuntimeRunStage::Coding),
+            None,
+            None,
+            None,
+        )
+        .expect("preparing -> coding");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Coding,
+            Some(RuntimeRunStage::Validating),
+            None,
+            None,
+            None,
+        )
+        .expect("coding -> validating");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Validating,
+            Some(RuntimeRunStage::Publishing),
+            None,
+            None,
+            None,
+        )
+        .expect("validating -> publishing");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Publishing,
+            None,
+            Some(RuntimeTerminalStatus::Success),
+            None,
+            None,
+        )
+        .expect("publishing -> success");
+
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "queued",
+            "queued action",
+            true,
+        )
+        .expect("insert queued action");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "worker",
+            "coding",
+            "internal worker detail",
+            false,
+        )
+        .expect("insert worker detail");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "publishing",
+            "published action",
+            true,
+        )
+        .expect("insert published action");
+
+        let summary = runtime_get_issue_run_summary_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            None,
+        )
+        .expect("load issue summary");
+
+        assert_eq!(summary.run_id, persisted.run_id);
+        assert_eq!(summary.completion.status, "success");
+        assert!(summary.completion.terminal_at.is_some());
+        assert_eq!(summary.key_actions.len(), 2);
+        assert_eq!(summary.key_actions[0].message, "published action");
+        assert_eq!(summary.key_actions[1].message, "queued action");
+    }
+
+    #[test]
+    fn runtime_boundary_issue_summary_validation_defaults_to_not_run_without_validation_events() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4020;
+        let run = build_run("owner/repo", issue_number, "Validation not run");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            None,
+            Some(RuntimeTerminalStatus::Failed),
+            Some("runtime_failed"),
+            Some("retry"),
+        )
+        .expect("queued -> failed");
+
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "queued",
+            "queued action",
+            true,
+        )
+        .expect("insert queued action");
+
+        let summary = runtime_get_issue_run_summary_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            None,
+        )
+        .expect("load issue summary");
+        assert_eq!(summary.validation_outcomes.code, "not-run");
+        assert_eq!(summary.validation_outcomes.browser, "not-run");
+    }
+
+    #[test]
+    fn runtime_boundary_issue_summary_uses_not_found_fallback_when_validation_target_missing() {
+        let conn = runtime_schema_test_connection();
+        let issue_number = 4021;
+        let run = build_run("owner/repo", issue_number, "Validation fallback");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            Some(RuntimeRunStage::Preparing),
+            None,
+            None,
+            None,
+        )
+        .expect("queued -> preparing");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Preparing,
+            Some(RuntimeRunStage::Coding),
+            None,
+            None,
+            None,
+        )
+        .expect("preparing -> coding");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Coding,
+            Some(RuntimeRunStage::Validating),
+            None,
+            None,
+            None,
+        )
+        .expect("coding -> validating");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Validating,
+            Some(RuntimeRunStage::Publishing),
+            None,
+            None,
+            None,
+        )
+        .expect("validating -> publishing");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Publishing,
+            None,
+            Some(RuntimeTerminalStatus::Success),
+            None,
+            None,
+        )
+        .expect("publishing -> success");
+
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "validating",
+            "validation phase started",
+            true,
+        )
+        .expect("insert validation milestone");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "validation",
+            "code-pass",
+            "code validation: pass",
+            true,
+        )
+        .expect("insert code validation result");
+
+        let summary = runtime_get_issue_run_summary_inner(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            issue_number,
+            None,
+        )
+        .expect("load issue summary");
+
+        assert_eq!(summary.validation_outcomes.code, "pass");
+        assert_eq!(summary.validation_outcomes.browser, "not-found");
+    }
+
+    #[test]
     fn runtime_boundary_milestone_templates_cover_lifecycle_checkpoints() {
         let checkpoints = [
             (
