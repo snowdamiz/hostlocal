@@ -67,8 +67,15 @@ export function MainLayout() {
   });
 
   return (
-    <div class={`layout${selectedBoardItem() ? " is-issue-panel-open" : ""}`}>
-      <aside class="sidebar-left">
+    <div
+      class="box-border grid h-full w-full gap-0 p-0 transition-[grid-template-columns] duration-[var(--sidebar-panel-transition)] ease-in-out max-[900px]:relative max-[900px]:grid-cols-1 max-[900px]:pt-[46px]"
+      classList={{
+        "[grid-template-columns:var(--sidebar-left-width)_minmax(0,1fr)_0]": !selectedBoardItem(),
+        "[grid-template-columns:var(--sidebar-left-width)_minmax(0,1fr)_var(--sidebar-right-width)]":
+          !!selectedBoardItem(),
+      }}
+    >
+      <aside class="relative z-40 m-0 flex min-h-0 flex-col rounded-none border border-[var(--surface-border)] bg-[var(--surface)] shadow-[8px_0_18px_var(--sidebar-shadow-dark)] max-[900px]:hidden">
         <RepositorySidebar
           githubUser={githubUser}
           repositories={repositories}
