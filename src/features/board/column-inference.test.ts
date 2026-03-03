@@ -70,4 +70,43 @@ describe("inferDefaultColumn", () => {
   it("falls back to todo for remaining open issues", () => {
     expect(inferDefaultColumn(createItem())).toBe("todo");
   });
+
+  it("maps runtime non-terminal stages to inProgress regardless of label or state fallback signals", () => {
+    const runtimeStages = ["queued", "preparing", "coding", "validating", "publishing"] as const;
+    for (const stage of runtimeStages) {
+      expect(
+        inferDefaultColumn(
+          createItem({
+            state: "closed",
+            isPullRequest: true,
+          }),
+          {
+            stage,
+            terminalStatus: null,
+          },
+        ),
+      ).toBe("inProgress");
+    }
+  });
+
+  it("maps runtime terminal statuses to deterministic review/todo columns", () => {
+    const scenarios: Array<{
+      terminalStatus: "success" | "failed" | "cancelled" | "guardrail_blocked";
+      expected: KanbanColumnKey;
+    }> = [
+      { terminalStatus: "success", expected: "inReview" },
+      { terminalStatus: "failed", expected: "todo" },
+      { terminalStatus: "cancelled", expected: "todo" },
+      { terminalStatus: "guardrail_blocked", expected: "todo" },
+    ];
+
+    for (const scenario of scenarios) {
+      expect(
+        inferDefaultColumn(createItem({ state: "closed" }), {
+          stage: "publishing",
+          terminalStatus: scenario.terminalStatus,
+        }),
+      ).toBe(scenario.expected);
+    }
+  });
 });
