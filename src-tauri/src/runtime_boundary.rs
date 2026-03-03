@@ -17,6 +17,7 @@ const SIDECAR_ALIAS: &str = "hostlocal-worker";
 const WORKSPACE_REPO_DIR: &str = "repo";
 const RUNTIME_EVIDENCE_DIR: &str = "hostlocal-runtime-evidence";
 const RUNTIME_RUN_STAGE_CHANGED_EVENT: &str = "runtime/run-stage-changed";
+const RUNTIME_RUN_TELEMETRY_EVENT: &str = "runtime/run-telemetry";
 const RUNTIME_RECOVERY_REASON_CODE: &str = "runtime_recovery_process_lost";
 const RUNTIME_RECOVERY_FIX_HINT: &str =
     "A previous HostLocal session ended during execution. Requeue the issue to run again.";
@@ -31,9 +32,9 @@ struct RuntimeTelemetryRedactionRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeTelemetryRedactionReason {
-    reason_code: String,
-    match_count: usize,
+pub struct RuntimeTelemetryRedactionReason {
+    pub reason_code: String,
+    pub match_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +43,78 @@ struct RuntimeTelemetryRedactionResult {
     masked_text: String,
     reasons: Vec<RuntimeTelemetryRedactionReason>,
     total_redactions: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeTelemetryMilestone {
+    Queue,
+    Start,
+    Preparing,
+    Coding,
+    Validating,
+    Publishing,
+    Finalization,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeTelemetryMilestoneDetail {
+    kind: &'static str,
+    stage: &'static str,
+    message: String,
+    include_in_summary: bool,
+}
+
+fn runtime_milestone_detail(
+    milestone: RuntimeTelemetryMilestone,
+    terminal_status: Option<&str>,
+) -> RuntimeTelemetryMilestoneDetail {
+    match milestone {
+        RuntimeTelemetryMilestone::Queue => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "queued",
+            message: "Issue run queued for execution.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Start => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "queued",
+            message: "Run started from repository queue.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Preparing => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "preparing",
+            message: "Preparing local workspace for issue run.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Coding => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "coding",
+            message: "Coding milestone started in worker runtime.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Validating => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "validating",
+            message: "Validation milestone started for runtime outputs.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Publishing => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "publishing",
+            message: "Publishing milestone started for runtime outputs.".to_string(),
+            include_in_summary: true,
+        },
+        RuntimeTelemetryMilestone::Finalization => RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "finalized",
+            message: format!(
+                "Run finalized with terminal status: {}.",
+                terminal_status.unwrap_or("unknown")
+            ),
+            include_in_summary: true,
+        },
+    }
 }
 
 fn runtime_telemetry_redaction_rules() -> &'static [RuntimeTelemetryRedactionRule] {
@@ -1042,6 +1115,53 @@ fn insert_runtime_run_event(
     load_runtime_run_event_by_id(conn, event_id).map_err(|e| e.to_string())
 }
 
+fn runtime_run_telemetry_payload_from_event(
+    run: &RuntimePersistedRun,
+    event: RuntimePersistedRunEvent,
+) -> RuntimeRunTelemetryEventPayload {
+    RuntimeRunTelemetryEventPayload {
+        event_id: event.event_id,
+        run_id: run.run_id,
+        repository_full_name: run.repository_full_name.clone(),
+        repository_key: run.repository_key.clone(),
+        issue_number: run.issue_number,
+        issue_title: run.issue_title.clone(),
+        issue_branch_name: run.issue_branch_name.clone(),
+        sequence: event.sequence,
+        kind: event.kind,
+        stage: event.stage,
+        message: event.message,
+        redaction_reasons: event.redaction_reasons,
+        include_in_summary: event.include_in_summary,
+        created_at: event.created_at,
+    }
+}
+
+fn persist_runtime_run_event_payload(
+    conn: &Connection,
+    run_id: i64,
+    kind: &str,
+    stage: &str,
+    message: &str,
+    include_in_summary: bool,
+) -> Result<RuntimeRunTelemetryEventPayload, String> {
+    let run = load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())?;
+    let event = insert_runtime_run_event(conn, run_id, kind, stage, message, include_in_summary)?;
+    Ok(runtime_run_telemetry_payload_from_event(&run, event))
+}
+
+fn runtime_run_telemetry_payloads_newest_first(
+    conn: &Connection,
+    run_id: i64,
+) -> Result<Vec<RuntimeRunTelemetryEventPayload>, String> {
+    let run = load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())?;
+    let events = load_runtime_run_events_newest_first(conn, run_id).map_err(|e| e.to_string())?;
+    Ok(events
+        .into_iter()
+        .map(|event| runtime_run_telemetry_payload_from_event(&run, event))
+        .collect())
+}
+
 fn prune_terminal_history_for_issue(
     conn: &Connection,
     repository_key: &str,
@@ -1320,10 +1440,11 @@ fn persist_finalize_runtime_run(
 fn persist_advance_runtime_run_to_publishing(
     db_path: &Path,
     run: &RuntimeIssueRun,
-) -> Result<RuntimePersistedRun, String> {
+) -> Result<Vec<RuntimePersistedRun>, String> {
     with_connection(db_path, |conn| {
         let run_id = resolve_runtime_run_id(conn, run).map_err(runtime_invariant_error)?;
         let mut current = load_runtime_run_by_id(conn, run_id)?;
+        let mut advanced_stages = Vec::new();
         while current.stage != RuntimeRunStage::Publishing {
             let Some(next_stage) = current.stage.next() else {
                 break;
@@ -1338,15 +1459,17 @@ fn persist_advance_runtime_run_to_publishing(
                 None,
             )
             .map_err(runtime_invariant_error)?;
+            advanced_stages.push(current.clone());
         }
 
-        Ok(current)
+        Ok(advanced_stages)
     })
 }
 
 struct RuntimeStartupReconcileOutcome {
     recoverable_runs: Vec<RuntimeIssueRun>,
     stage_change_payloads: Vec<RuntimeRunStageChangedEventPayload>,
+    telemetry_payloads: Vec<RuntimeRunTelemetryEventPayload>,
 }
 
 fn reconcile_runtime_state_on_startup_inner(
@@ -1354,6 +1477,7 @@ fn reconcile_runtime_state_on_startup_inner(
 ) -> Result<RuntimeStartupReconcileOutcome, String> {
     let non_terminal_runs = load_non_terminal_runtime_runs_ordered(conn).map_err(|e| e.to_string())?;
     let mut touched_repositories = BTreeMap::new();
+    let mut telemetry_payloads = Vec::new();
     for persisted in &non_terminal_runs {
         touched_repositories
             .entry(persisted.repository_key.clone())
@@ -1372,6 +1496,21 @@ fn reconcile_runtime_state_on_startup_inner(
             Some(RUNTIME_RECOVERY_REASON_CODE),
             Some(RUNTIME_RECOVERY_FIX_HINT),
         )?;
+        let recovery_detail = RuntimeTelemetryMilestoneDetail {
+            kind: "milestone",
+            stage: "finalized",
+            message: "Recovered stale in-flight run as failed after app restart.".to_string(),
+            include_in_summary: true,
+        };
+        let telemetry_payload = persist_runtime_run_event_payload(
+            conn,
+            persisted.run_id,
+            recovery_detail.kind,
+            recovery_detail.stage,
+            recovery_detail.message.as_str(),
+            recovery_detail.include_in_summary,
+        )?;
+        telemetry_payloads.push(telemetry_payload);
     }
 
     let recoverable_runs = load_recoverable_queued_runtime_runs_ordered(conn)
@@ -1405,6 +1544,7 @@ fn reconcile_runtime_state_on_startup_inner(
     Ok(RuntimeStartupReconcileOutcome {
         recoverable_runs,
         stage_change_payloads,
+        telemetry_payloads,
     })
 }
 
@@ -1422,6 +1562,9 @@ pub fn reconcile_runtime_state_on_startup(app: &AppHandle) -> Result<(), String>
 
     for payload in &reconcile_outcome.stage_change_payloads {
         emit_runtime_stage_changed_event(app, payload);
+    }
+    for payload in &reconcile_outcome.telemetry_payloads {
+        emit_runtime_run_telemetry_event(app, payload);
     }
 
     for run in active_runs {
@@ -1530,6 +1673,25 @@ pub struct RuntimeRunStageChangedEventPayload {
     pub fix_hint: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRunTelemetryEventPayload {
+    pub event_id: i64,
+    pub run_id: i64,
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub issue_number: i64,
+    pub issue_title: String,
+    pub issue_branch_name: String,
+    pub sequence: i64,
+    pub kind: String,
+    pub stage: String,
+    pub message: String,
+    pub redaction_reasons: Vec<RuntimeTelemetryRedactionReason>,
+    pub include_in_summary: bool,
+    pub created_at: String,
+}
+
 fn runtime_stage_changed_event_payload_inner(
     conn: &Connection,
     run_id: i64,
@@ -1589,6 +1751,52 @@ fn emit_runtime_stage_changed_event_for_run(app: &AppHandle, run_id: i64) {
     if let Ok(payload) = payload {
         emit_runtime_stage_changed_event(app, &payload);
     }
+}
+
+fn emit_runtime_run_telemetry_event(
+    app: &AppHandle,
+    payload: &RuntimeRunTelemetryEventPayload,
+) {
+    let _ = app.emit(RUNTIME_RUN_TELEMETRY_EVENT, payload);
+}
+
+fn record_runtime_telemetry_event(
+    app: &AppHandle,
+    run: &RuntimeIssueRun,
+    kind: &str,
+    stage: &str,
+    message: &str,
+    include_in_summary: bool,
+) {
+    let db_path = app.state::<DbPath>();
+    let payload = with_connection(&db_path.0, |conn| {
+        let run_id = resolve_runtime_run_id(conn, run).map_err(runtime_invariant_error)?;
+        persist_runtime_run_event_payload(conn, run_id, kind, stage, message, include_in_summary)
+            .map_err(runtime_invariant_error)
+    });
+    if let Ok(payload) = payload {
+        emit_runtime_run_telemetry_event(app, &payload);
+    }
+}
+
+fn record_runtime_telemetry_milestone(
+    app: &AppHandle,
+    run: &RuntimeIssueRun,
+    milestone: RuntimeTelemetryMilestone,
+    terminal_status: Option<RuntimeTerminalStatus>,
+) {
+    let detail = runtime_milestone_detail(
+        milestone,
+        terminal_status.map(RuntimeTerminalStatus::as_str),
+    );
+    record_runtime_telemetry_event(
+        app,
+        run,
+        detail.kind,
+        detail.stage,
+        detail.message.as_str(),
+        detail.include_in_summary,
+    );
 }
 
 fn runtime_get_repository_run_snapshot_inner(
@@ -1913,8 +2121,26 @@ fn finalize_run(
 ) {
     let db_path = app.state::<DbPath>();
     if terminal_status == RuntimeTerminalStatus::Success {
-        if let Ok(publishing) = persist_advance_runtime_run_to_publishing(&db_path.0, &run) {
-            emit_runtime_stage_changed_event_for_run(app, publishing.run_id);
+        if let Ok(advanced_stages) = persist_advance_runtime_run_to_publishing(&db_path.0, &run) {
+            for stage in advanced_stages {
+                emit_runtime_stage_changed_event_for_run(app, stage.run_id);
+                if stage.stage == RuntimeRunStage::Validating {
+                    record_runtime_telemetry_milestone(
+                        app,
+                        &run,
+                        RuntimeTelemetryMilestone::Validating,
+                        None,
+                    );
+                }
+                if stage.stage == RuntimeRunStage::Publishing {
+                    record_runtime_telemetry_milestone(
+                        app,
+                        &run,
+                        RuntimeTelemetryMilestone::Publishing,
+                        None,
+                    );
+                }
+            }
         }
     }
     let finalized = if let Ok(finalized) = persist_finalize_runtime_run(
@@ -1932,6 +2158,12 @@ fn finalize_run(
     };
 
     emit_runtime_stage_changed_event_for_run(app, finalized.run_id);
+    record_runtime_telemetry_milestone(
+        app,
+        &run,
+        RuntimeTelemetryMilestone::Finalization,
+        Some(terminal_status),
+    );
 
     let _ = record_terminal_evidence(&run, terminal_status, reason_code);
     let _ = finalize_workspace_cleanup(workspace_root.as_deref());
@@ -1997,6 +2229,15 @@ fn spawn_sidecar_for_run(
         while let Some(event) = receiver.recv().await {
             match event {
                 CommandEvent::Terminated(payload) => {
+                    let exit_code = payload.code.unwrap_or(-1);
+                    record_runtime_telemetry_event(
+                        &app_handle,
+                        &run_for_finalize,
+                        "system",
+                        "coding",
+                        format!("Worker process exited with status code {exit_code}.").as_str(),
+                        false,
+                    );
                     terminal_status = if payload.code == Some(0) {
                         RuntimeTerminalStatus::Success
                     } else {
@@ -2005,6 +2246,14 @@ fn spawn_sidecar_for_run(
                     break;
                 }
                 CommandEvent::Error(_) => {
+                    record_runtime_telemetry_event(
+                        &app_handle,
+                        &run_for_finalize,
+                        "system",
+                        "coding",
+                        "Worker process reported an execution error before termination.",
+                        false,
+                    );
                     terminal_status = RuntimeTerminalStatus::Failed;
                     break;
                 }
@@ -2026,6 +2275,8 @@ fn spawn_sidecar_for_run(
 }
 
 fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRunError> {
+    record_runtime_telemetry_milestone(app, &run, RuntimeTelemetryMilestone::Start, None);
+
     let db_path = app.state::<DbPath>();
     let preparing = persist_transition_runtime_run_stage(
         &db_path.0,
@@ -2035,6 +2286,7 @@ fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRu
     )
     .map_err(|_| StartRunError::with_outcome(runtime_transition_failed_outcome(), None))?;
     emit_runtime_stage_changed_event_for_run(app, preparing.run_id);
+    record_runtime_telemetry_milestone(app, &run, RuntimeTelemetryMilestone::Preparing, None);
 
     let prepared = prepare_workspace_for_run(&run)?;
     let coding = persist_transition_runtime_run_stage(
@@ -2050,6 +2302,7 @@ fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRu
         )
     })?;
     emit_runtime_stage_changed_event_for_run(app, coding.run_id);
+    record_runtime_telemetry_milestone(app, &run, RuntimeTelemetryMilestone::Coding, None);
 
     spawn_sidecar_for_run(app, &run, &prepared)
 }
@@ -2123,6 +2376,7 @@ pub async fn runtime_enqueue_issue_run(
     let persisted = persist_insert_runtime_run(&db_path.0, &run)?;
     run.run_id = Some(persisted.run_id);
     emit_runtime_stage_changed_event_for_run(&app, persisted.run_id);
+    record_runtime_telemetry_milestone(&app, &run, RuntimeTelemetryMilestone::Queue, None);
 
     let outcome = {
         let mut queue = match state.lock() {
@@ -2136,6 +2390,12 @@ pub async fn runtime_enqueue_issue_run(
                     Some("Retry enqueue after restarting HostLocal."),
                 ) {
                     emit_runtime_stage_changed_event_for_run(&app, finalized.run_id);
+                    record_runtime_telemetry_milestone(
+                        &app,
+                        &run,
+                        RuntimeTelemetryMilestone::Finalization,
+                        Some(RuntimeTerminalStatus::Failed),
+                    );
                 }
                 return Err(error);
             }
@@ -2208,6 +2468,12 @@ pub async fn runtime_dequeue_issue_run(
         Some("Issue run was removed from queue before execution."),
     )?;
     emit_runtime_stage_changed_event_for_run(&app, finalized.run_id);
+    record_runtime_telemetry_milestone(
+        &app,
+        &removed_run,
+        RuntimeTelemetryMilestone::Finalization,
+        Some(RuntimeTerminalStatus::Cancelled),
+    );
 
     Ok(RuntimeQueueOutcome::removed())
 }
