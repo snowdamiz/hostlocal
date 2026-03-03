@@ -1031,4 +1031,41 @@ mod tests {
         assert_eq!(block.rule(), "workspace_boundary");
         assert_eq!(block.target_type(), "path");
     }
+
+    #[test]
+    fn runtime_boundary_records_minimal_terminal_evidence_payload() {
+        let run = build_run("owner/repo", 701, "Capture run evidence");
+        let evidence_path = record_terminal_evidence(
+            &run,
+            RuntimeTerminalStatus::GuardrailBlocked,
+            Some("runtime_guardrail_workspace_boundary_path".to_string()),
+        )
+        .expect("evidence file path");
+
+        let raw = std::fs::read_to_string(&evidence_path).expect("read evidence file");
+        let payload: serde_json::Value = serde_json::from_str(&raw).expect("decode evidence");
+        assert_eq!(payload["repositoryKey"], "owner/repo");
+        assert_eq!(payload["issueNumber"], 701);
+        assert_eq!(payload["branch"], "hostlocal/issue-701-capture-run-evidence");
+        assert_eq!(payload["terminalStatus"], "guardrail_blocked");
+        assert_eq!(
+            payload["blockedReasonCode"],
+            "runtime_guardrail_workspace_boundary_path"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_finalize_workspace_cleanup_removes_directory_tree() {
+        let workspace = tempdir().expect("workspace tempdir");
+        let file_path = workspace.path().join("artifact.txt");
+        std::fs::write(&file_path, "temp artifact").expect("write temp artifact");
+        assert!(workspace.path().exists());
+
+        let removed = finalize_workspace_cleanup(Some(workspace.path()));
+        assert!(removed, "cleanup should report attempted removal");
+        assert!(
+            !workspace.path().exists(),
+            "workspace directory should be removed by terminal finalizer"
+        );
+    }
 }
