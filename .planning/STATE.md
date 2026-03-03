@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-03T02:22:30Z"
+last_updated: "2026-03-03T02:31:13.343Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -23,32 +23,33 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 ## Current Position
 
 Phase: 02.1 of 10 (Production Standards Refactor)
-Plan: 2 of 5 in current phase
+Plan: 3 of 5 in current phase
 Status: In progress
-Last activity: 2026-03-03 — Completed plan 02.1-02 (2/5) with verification passed.
+Last activity: 2026-03-03 — Completed plan 02.1-03 (3/5) with verification passed.
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 75%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 11 min
-- Total execution time: 0.7 hours
+- Total plans completed: 6
+- Average duration: 8 min
+- Total execution time: 0.8 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 02-policy-gated-issue-intake | 3 | 43 min | 14 min |
-| 02.1-production-standards-refactor | 2 | 4 min | 2 min |
+| 02.1-production-standards-refactor | 3 | 8 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-01, 02-02, 02-03, 02.1-01, 02.1-02
+- Last 5 plans: 02-02, 02-03, 02.1-01, 02.1-02, 02.1-03
 - Trend: Stable
 
 *Updated after each plan completion*
 | Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc P02 | 3 min | 3 tasks | 5 files |
+| Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc P03 | 4 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Recent decisions affecting current work:
 - [Phase 02.1]: Route App.tsx through styles/index.css so Tailwind, tokens, and bridge layers share one style entrypoint.
 - [Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc]: Keep highlight.js language registration inside the issue-content feature module to preserve behavior while removing MainLayout coupling.
 - [Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc]: Keep board-column precedence explicit as closed > pull request > in-progress > todo and enforce it with tests.
+- [Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc]: Keep GitHub auth command calls and user-facing auth error strings identical while moving logic into useGithubAuth.
+- [Phase 02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc]: Let useRepositories react to auth state via accessor input so MainLayout composes selected repository state instead of owning repository internals.
 
 ### Roadmap Evolution
 
@@ -84,6 +87,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 02:22
-Stopped at: Completed 02.1-02-PLAN.md
-Resume file: .planning/phases/02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc/02.1-02-SUMMARY.md
+Last session: 2026-03-03 02:30
+Stopped at: Completed 02.1-03-PLAN.md
+Resume file: .planning/phases/02.1-refactor-the-app-to-production-standards-files-should-have-have-multiple-concerns-for-example-there-is-aglobal-css-file-multiple-very-large-tsx-files-etc/02.1-03-SUMMARY.md
