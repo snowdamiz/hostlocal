@@ -108,10 +108,12 @@ impl GuardrailBlock {
         }
     }
 
+    #[cfg(test)]
     pub fn rule(&self) -> &str {
         &self.rule
     }
 
+    #[cfg(test)]
     pub fn target_type(&self) -> &str {
         &self.target_type
     }
@@ -420,7 +422,7 @@ fn run_git_command(args: &[&str], current_dir: Option<&Path>) -> Result<(), Runt
 
 fn prepare_workspace_for_run(run: &RuntimeIssueRun) -> Result<PreparedWorkspace, StartRunError> {
     let temp_dir = TempDir::new_in(std::env::temp_dir()).map_err(|_| StartRunError::startup(None))?;
-    let workspace_root = temp_dir.into_path();
+    let workspace_root = temp_dir.keep();
     let repository_path = workspace_root.join(WORKSPACE_REPO_DIR);
 
     ensure_within_workspace_for_create(&workspace_root, &repository_path)
@@ -495,14 +497,18 @@ fn generate_run_id(run: &RuntimeIssueRun) -> String {
     )
 }
 
-fn write_runtime_evidence(
+fn runtime_evidence_dir() -> PathBuf {
+    std::env::temp_dir().join(RUNTIME_EVIDENCE_DIR)
+}
+
+fn record_terminal_evidence(
     run: &RuntimeIssueRun,
     terminal_status: RuntimeTerminalStatus,
     blocked_reason_code: Option<String>,
-) {
-    let evidence_dir = std::env::temp_dir().join(RUNTIME_EVIDENCE_DIR);
+) -> Option<PathBuf> {
+    let evidence_dir = runtime_evidence_dir();
     if fs::create_dir_all(&evidence_dir).is_err() {
-        return;
+        return None;
     }
 
     let run_id = generate_run_id(run);
@@ -516,17 +522,23 @@ fn write_runtime_evidence(
     };
     let encoded = match serde_json::to_vec_pretty(&evidence) {
         Ok(encoded) => encoded,
-        Err(_) => return,
+        Err(_) => return None,
     };
-    let _ = fs::write(evidence_dir.join(format!("{run_id}.json")), encoded);
+    let path = evidence_dir.join(format!("{run_id}.json"));
+    if fs::write(&path, encoded).is_err() {
+        return None;
+    }
+
+    Some(path)
 }
 
-fn cleanup_workspace(workspace_root: Option<&Path>) {
+fn finalize_workspace_cleanup(workspace_root: Option<&Path>) -> bool {
     let Some(workspace_root) = workspace_root else {
-        return;
+        return false;
     };
 
     let _ = fs::remove_dir_all(workspace_root);
+    true
 }
 
 fn finalize_run(
@@ -536,8 +548,8 @@ fn finalize_run(
     terminal_status: RuntimeTerminalStatus,
     blocked_reason_code: Option<String>,
 ) {
-    write_runtime_evidence(&run, terminal_status, blocked_reason_code);
-    cleanup_workspace(workspace_root.as_deref());
+    let _ = record_terminal_evidence(&run, terminal_status, blocked_reason_code);
+    let _ = finalize_workspace_cleanup(workspace_root.as_deref());
 
     let next_run = {
         let state = app.state::<RuntimeBoundarySharedState>();
@@ -630,6 +642,7 @@ fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRu
     spawn_sidecar_for_run(app, &run, &prepared)
 }
 
+#[cfg(test)]
 pub fn runtime_enqueue_issue_run_inner(
     state: &RuntimeBoundarySharedState,
     request: RuntimeEnqueueIssueRunRequest,
