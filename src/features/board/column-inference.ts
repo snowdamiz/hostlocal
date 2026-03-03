@@ -7,10 +7,37 @@ export interface ColumnInferenceItem {
   assignees: string[];
 }
 
+export type RuntimeColumnTerminalStatus = "success" | "failed" | "cancelled" | "guardrail_blocked";
+
+export interface RuntimeColumnInferenceMetadata {
+  stage: string;
+  terminalStatus: RuntimeColumnTerminalStatus | null;
+}
+
 export const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
 export const AGENT_IN_PROGRESS_LABEL_PREFIX = "agent:";
+const ACTIVE_RUNTIME_STAGES = new Set(["queued", "preparing", "coding", "validating", "publishing"]);
 
-export const inferDefaultColumn = (item: ColumnInferenceItem): KanbanColumnKey => {
+export const inferDefaultColumn = (
+  item: ColumnInferenceItem,
+  runtimeMetadata?: RuntimeColumnInferenceMetadata | null,
+): KanbanColumnKey => {
+  if (runtimeMetadata?.terminalStatus === "success") {
+    return "inReview";
+  }
+
+  if (
+    runtimeMetadata?.terminalStatus === "failed" ||
+    runtimeMetadata?.terminalStatus === "cancelled" ||
+    runtimeMetadata?.terminalStatus === "guardrail_blocked"
+  ) {
+    return "todo";
+  }
+
+  if (runtimeMetadata && ACTIVE_RUNTIME_STAGES.has(runtimeMetadata.stage)) {
+    return "inProgress";
+  }
+
   if (item.state === "closed") {
     return "done";
   }

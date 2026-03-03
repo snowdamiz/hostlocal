@@ -350,9 +350,21 @@ export function useBoardInteractions(
       done: [],
     };
     const optimisticColumns = optimisticColumnByItemId();
+    const runtimeByIssueNumber = runtimeSnapshotByIssueNumber();
 
     for (const item of repositoryItems()) {
-      const column = optimisticColumns[item.id] ?? inferDefaultColumn(item);
+      const runtimeMetadata = runtimeByIssueNumber[item.number] ?? null;
+      const column =
+        optimisticColumns[item.id] ??
+        inferDefaultColumn(
+          item,
+          runtimeMetadata
+            ? {
+                stage: runtimeMetadata.stage,
+                terminalStatus: runtimeMetadata.terminalStatus,
+              }
+            : null,
+        );
       grouped[column].push(item);
     }
 
