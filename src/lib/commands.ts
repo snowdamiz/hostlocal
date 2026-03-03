@@ -127,6 +127,12 @@ export function githubAttemptIssueIntake(
   return invoke<GithubIssueIntakeOutcome>("github_attempt_issue_intake", { request });
 }
 
+export function githubRevertIssueIntake(
+  request: GithubIssueIntakeRequest,
+): Promise<GithubIssueIntakeOutcome> {
+  return invoke<GithubIssueIntakeOutcome>("github_revert_issue_intake", { request });
+}
+
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {
   return invoke<GithubDeviceAuthStart>("github_auth_start");
 }

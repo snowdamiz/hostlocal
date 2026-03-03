@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
-pub const INTAKE_LABEL_PREFIX: &str = "intake:";
 pub const AGENT_LABEL_PREFIX: &str = "agent:";
 pub const DENY_SIGNAL_LABELS: &[&str] = &["epic", "large", "size:xl", "scope:epic"];
 
@@ -113,17 +112,6 @@ pub fn evaluate_issue_intake_policy(issue: &GithubIssueIntakePolicyInput) -> Git
         );
     }
 
-    let has_intake_label = issue
-        .labels
-        .iter()
-        .any(|label| label.trim().to_ascii_lowercase().starts_with(INTAKE_LABEL_PREFIX));
-    if !has_intake_label {
-        return GithubIssueIntakeOutcome::rejected(
-            "missing_intake_label",
-            "Add an intake:* label to mark the issue as intake-eligible.",
-        );
-    }
-
     let has_deny_signal = issue.labels.iter().any(|label| {
         let normalized = label.trim().to_ascii_lowercase();
         DENY_SIGNAL_LABELS
@@ -166,14 +154,42 @@ pub fn labels_satisfy_intake_acceptance(labels: &[String], agent_label: &str) ->
         return false;
     }
 
-    let has_intake_label = labels
-        .iter()
-        .any(|label| normalize_label(label).starts_with(INTAKE_LABEL_PREFIX));
     let has_agent_label = labels
         .iter()
         .any(|label| normalize_label(label) == normalized_agent_label);
 
-    has_intake_label && has_agent_label
+    has_agent_label
+}
+
+pub fn labels_satisfy_intake_reversion(labels: &[String], agent_label: &str) -> bool {
+    let normalized_agent_label = normalize_label(agent_label);
+    if normalized_agent_label.is_empty() {
+        return false;
+    }
+
+    labels
+        .iter()
+        .all(|label| normalize_label(label) != normalized_agent_label)
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    const HEX_TABLE: &[u8; 16] = b"0123456789ABCDEF";
+
+    for byte in value.bytes() {
+        let is_unreserved =
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
+        if is_unreserved {
+            encoded.push(byte as char);
+            continue;
+        }
+
+        encoded.push('%');
+        encoded.push(HEX_TABLE[(byte >> 4) as usize] as char);
+        encoded.push(HEX_TABLE[(byte & 0x0F) as usize] as char);
+    }
+
+    encoded
 }
 
 fn parse_retry_after_seconds(headers: &HeaderMap) -> Option<u64> {
@@ -355,6 +371,49 @@ async fn apply_issue_labels(
     Ok(())
 }
 
+async fn remove_issue_label(
+    client: &reqwest::Client,
+    token: &str,
+    repository_full_name: &str,
+    issue_number: i64,
+    label: &str,
+) -> Result<(), GithubApiResponse> {
+    let encoded_label = percent_encode_path_segment(label);
+    let labels_url = format!(
+        "https://api.github.com/repos/{repository_full_name}/issues/{issue_number}/labels/{encoded_label}"
+    );
+
+    let response = client
+        .delete(&labels_url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| GithubApiResponse {
+            status: 0,
+            body: Some(error.to_string()),
+            retry_after_seconds: None,
+            rate_limit_reset_epoch_seconds: None,
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let retry_after_seconds = parse_retry_after_seconds(response.headers());
+        let rate_limit_reset_epoch_seconds =
+            parse_rate_limit_reset_epoch_seconds(response.headers());
+        let body = response.text().await.ok();
+        return Err(GithubApiResponse {
+            status,
+            body,
+            retry_after_seconds,
+            rate_limit_reset_epoch_seconds,
+        });
+    }
+
+    Ok(())
+}
+
 fn resolve_github_token(state: &GithubAuthState) -> Option<String> {
     match current_session_access_token(state) {
         Ok(Some(token)) => Some(token),
@@ -427,23 +486,7 @@ pub async fn github_attempt_issue_intake(
         return Ok(policy_outcome);
     }
 
-    let intake_label = issue_labels.iter().find_map(|label| {
-        let normalized = normalize_label(label);
-        if normalized.starts_with(INTAKE_LABEL_PREFIX) {
-            Some(normalized)
-        } else {
-            None
-        }
-    });
-
-    let Some(intake_label) = intake_label else {
-        return Ok(GithubIssueIntakeOutcome::rejected(
-            "missing_intake_label",
-            "Add an intake:* label to mark the issue as intake-eligible.",
-        ));
-    };
-
-    let required_labels = vec![intake_label, agent_label.clone()];
+    let required_labels = vec![agent_label.clone()];
 
     if let Err(response) = apply_issue_labels(
         &client,
@@ -478,6 +521,95 @@ pub async fn github_attempt_issue_intake(
     Ok(GithubIssueIntakeOutcome::accepted())
 }
 
+#[tauri::command]
+pub async fn github_revert_issue_intake(
+    state: State<'_, GithubAuthState>,
+    request: GithubIssueIntakeRequest,
+) -> Result<GithubIssueIntakeOutcome, String> {
+    let repository_full_name = request.repository_full_name.trim();
+    if repository_full_name.is_empty()
+        || !repository_full_name.contains('/')
+        || request.issue_number <= 0
+    {
+        return Ok(GithubIssueIntakeOutcome::rejected(
+            "label_persist_failed",
+            "Select a valid repository issue before moving it back to Todo.",
+        ));
+    }
+
+    let Some(agent_label) = normalize_agent_label(&request.agent_label) else {
+        return Ok(GithubIssueIntakeOutcome::rejected(
+            "label_persist_failed",
+            "Agent ownership label is invalid. Retry with a valid agent label.",
+        ));
+    };
+
+    let Some(token) = resolve_github_token(&state) else {
+        return Ok(GithubIssueIntakeOutcome::rejected(
+            "label_persist_failed",
+            "Connect GitHub before updating issue intake state.",
+        ));
+    };
+
+    let client = match github_http_client() {
+        Ok(client) => client,
+        Err(_) => {
+            return Ok(GithubIssueIntakeOutcome::rejected(
+                "label_persist_failed",
+                "GitHub client initialization failed. Retry intake update.",
+            ));
+        }
+    };
+
+    let issue = match fetch_github_issue(&client, &token, repository_full_name, request.issue_number).await {
+        Ok(issue) => issue,
+        Err(response) => return Ok(map_issue_fetch_failure(&response)),
+    };
+
+    let issue_labels = issue
+        .labels
+        .iter()
+        .map(|label| label.name.clone())
+        .collect::<Vec<_>>();
+
+    if labels_satisfy_intake_reversion(&issue_labels, &agent_label) {
+        return Ok(GithubIssueIntakeOutcome::accepted());
+    }
+
+    if let Err(response) = remove_issue_label(
+        &client,
+        &token,
+        repository_full_name,
+        request.issue_number,
+        &agent_label,
+    )
+    .await
+    {
+        return Ok(map_label_persist_failure(&response));
+    }
+
+    let refreshed_issue =
+        match fetch_github_issue(&client, &token, repository_full_name, request.issue_number).await {
+            Ok(issue) => issue,
+            Err(response) => return Ok(map_label_persist_failure(&response)),
+        };
+
+    let refreshed_labels = refreshed_issue
+        .labels
+        .into_iter()
+        .map(|label| label.name)
+        .collect::<Vec<_>>();
+
+    if !labels_satisfy_intake_reversion(&refreshed_labels, &agent_label) {
+        return Ok(GithubIssueIntakeOutcome::rejected(
+            "label_persist_failed",
+            "Agent ownership label is still present on GitHub. Retry moving this issue to Todo.",
+        ));
+    }
+
+    Ok(GithubIssueIntakeOutcome::accepted())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,7 +625,7 @@ mod tests {
         GithubIssueIntakePolicyInput {
             state: "open".to_string(),
             is_pull_request: false,
-            labels: vec!["intake:small".to_string()],
+            labels: vec!["triage".to_string()],
             body: Some("Implement this in one focused PR.".to_string()),
         }
     }
@@ -502,7 +634,7 @@ mod tests {
     fn policy_locked_decisions_table() {
         let cases = vec![
             PolicyCase {
-                name: "accept_open_issue_with_body_and_intake_label",
+                name: "accept_open_issue_with_body",
                 issue: valid_issue(),
                 expected: GithubIssueIntakeOutcome::accepted(),
             },
@@ -540,20 +672,9 @@ mod tests {
                 ),
             },
             PolicyCase {
-                name: "reject_missing_intake_label_family",
-                issue: GithubIssueIntakePolicyInput {
-                    labels: vec!["triage".to_string()],
-                    ..valid_issue()
-                },
-                expected: GithubIssueIntakeOutcome::rejected(
-                    "missing_intake_label",
-                    "Add an intake:* label to mark the issue as intake-eligible.",
-                ),
-            },
-            PolicyCase {
                 name: "reject_deny_signal_label",
                 issue: GithubIssueIntakePolicyInput {
-                    labels: vec!["intake:small".to_string(), "epic".to_string()],
+                    labels: vec!["triage".to_string(), "epic".to_string()],
                     ..valid_issue()
                 },
                 expected: GithubIssueIntakeOutcome::rejected(
@@ -588,9 +709,34 @@ mod tests {
 
     #[test]
     fn command_helpers_detect_required_labels() {
-        let labels = vec!["intake:small".to_string(), "agent:hostlocal".to_string()];
+        let labels = vec!["triage".to_string(), "agent:hostlocal".to_string()];
         assert!(labels_satisfy_intake_acceptance(&labels, "agent:hostlocal"));
         assert!(!labels_satisfy_intake_acceptance(&labels, "agent:other"));
+        assert!(!labels_satisfy_intake_reversion(
+            &labels,
+            "agent:hostlocal"
+        ));
+    }
+
+    #[test]
+    fn command_helpers_detect_reversion_when_agent_label_removed() {
+        let labels = vec!["triage".to_string(), "bug".to_string()];
+        assert!(labels_satisfy_intake_reversion(
+            &labels,
+            "agent:hostlocal"
+        ));
+    }
+
+    #[test]
+    fn command_helpers_percent_encode_path_segments() {
+        assert_eq!(
+            percent_encode_path_segment("agent:hostlocal"),
+            "agent%3Ahostlocal"
+        );
+        assert_eq!(
+            percent_encode_path_segment("agent:my bot/test"),
+            "agent%3Amy%20bot%2Ftest"
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ describe("createIntakeToastStore", () => {
     const first = store.pushRejectionToast("empty_body");
     nowMs += 8_500;
     const second = store.pushRejectionToast("empty_body");
-    const third = store.pushRejectionToast("missing_intake_label");
+    const third = store.pushRejectionToast("issue_closed");
 
     const toasts = store.getToasts();
     expect(toasts).toHaveLength(3);
@@ -42,11 +42,11 @@ describe("createIntakeToastStore", () => {
   it("supports dismiss and clear operations for viewport lifecycle control", () => {
     const store = createIntakeToastStore();
     const first = store.pushRejectionToast("empty_body");
-    store.pushRejectionToast("missing_intake_label");
+    store.pushRejectionToast("issue_closed");
 
     store.dismissToast(first.id);
     expect(store.getToasts()).toHaveLength(1);
-    expect(store.getToasts()[0].reasonCode).toBe("missing_intake_label");
+    expect(store.getToasts()[0].reasonCode).toBe("issue_closed");
 
     store.clearToasts();
     expect(store.getToasts()).toHaveLength(0);

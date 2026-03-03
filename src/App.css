@@ -41,11 +41,15 @@ html {
   --intake-toast-dismiss-border: var(--surface-border);
   --intake-toast-dismiss-text: var(--text-secondary);
   --intake-toast-shadow: var(--sidebar-shadow-dark);
+  --intake-toast-viewport-offset: 12px;
   --intake-drag-handle-bg: var(--surface);
   --intake-drag-handle-border: var(--surface-border);
   --intake-drag-handle-bg-hover: var(--surface-dark);
   --intake-drag-handle-border-hover: var(--surface-light);
   --intake-drag-handle-dot: var(--text-muted);
+  --kanban-drag-ghost-bg: var(--surface-dark);
+  --kanban-drag-ghost-border: var(--surface-light);
+  --kanban-drag-ghost-shadow: var(--sidebar-shadow-dark);
 }
 
 
@@ -94,13 +98,13 @@ body {
 
 .intake-toast-viewport {
   position: absolute;
-  top: calc(var(--drag-region-height) + 10px);
-  right: 12px;
+  right: var(--intake-toast-viewport-offset);
+  bottom: var(--intake-toast-viewport-offset);
   z-index: 150;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(420px, calc(100% - 24px));
+  width: min(420px, calc(100% - (var(--intake-toast-viewport-offset) * 2)));
   pointer-events: none;
 }
 
@@ -1353,13 +1357,13 @@ html.is-card-dragging * {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  cursor: default;
+  cursor: grab;
   transition:
     transform 150ms ease,
     box-shadow 170ms ease,
     border-color 170ms ease,
     background-color 170ms ease,
-    opacity 120ms ease;
+    opacity 180ms ease;
 }
 
 .kanban-card:hover {
@@ -1368,9 +1372,14 @@ html.is-card-dragging * {
   box-shadow: 0 6px 16px var(--app-grid-line);
 }
 
+.kanban-card:active {
+  cursor: grabbing;
+}
+
 .kanban-card.is-dragging {
-  opacity: 0.75;
-  transform: scale(0.99);
+  opacity: 0.05;
+  transform: translate3d(10px, -16px, 0) scale(0.94);
+  border-color: var(--surface-light);
 }
 
 .kanban-card.is-selected {
@@ -1475,6 +1484,46 @@ html.is-card-dragging * {
   line-height: 1.35;
 }
 
+.kanban-drag-ghost {
+  position: fixed;
+  z-index: 260;
+  pointer-events: none;
+  width: min(320px, calc(100vw - 32px));
+  border: 1px solid var(--kanban-drag-ghost-border);
+  border-radius: 11px;
+  background: var(--kanban-drag-ghost-bg);
+  box-shadow: 0 14px 24px var(--kanban-drag-ghost-shadow);
+  padding: 10px;
+  transform: translate(-50%, -50%);
+  opacity: 0.96;
+  animation: drag-ghost-lift 160ms ease;
+}
+
+.kanban-drag-ghost.is-snapback {
+  opacity: 0.9;
+}
+
+.kanban-drag-ghost-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kanban-drag-ghost-top-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kanban-drag-ghost-title {
+  margin: 8px 0 0;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 /* ── Animations ──────────────────────────────────────────── */
 
 @keyframes fade-in {
@@ -1485,6 +1534,17 @@ html.is-card-dragging * {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes drag-ghost-lift {
+  from {
+    opacity: 0.7;
+    transform: translate(-50%, -50%) scale(0.92) rotate(-1deg);
+  }
+  to {
+    opacity: 0.96;
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
   }
 }
 

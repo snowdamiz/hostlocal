@@ -52,6 +52,7 @@ pub fn run() {
             github_auth::github_list_repositories,
             github_auth::github_list_repository_items,
             github_intake::github_attempt_issue_intake,
+            github_intake::github_revert_issue_intake,
             github_auth::github_auth_start,
             github_auth::github_auth_poll,
             github_auth::github_auth_logout,

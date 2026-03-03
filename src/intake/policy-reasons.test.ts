@@ -7,7 +7,6 @@ import {
 describe("INTAKE_POLICY_REASON_MAP", () => {
   it("contains all required phase-two policy rejection reason codes", () => {
     expect(Object.keys(INTAKE_POLICY_REASON_MAP)).toEqual([
-      "missing_intake_label",
       "empty_body",
       "issue_closed",
       "is_pull_request",

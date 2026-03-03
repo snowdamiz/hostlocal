@@ -1,5 +1,4 @@
 export type IntakePolicyReasonCode =
-  | "missing_intake_label"
   | "empty_body"
   | "issue_closed"
   | "is_pull_request"
@@ -26,10 +25,6 @@ const UNKNOWN_INTAKE_POLICY_REASON: IntakePolicyReasonCopy = {
 };
 
 export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, IntakePolicyReasonCopy>> = {
-  missing_intake_label: {
-    violatedRule: "Issue is missing an intake label in the accepted policy prefix family.",
-    fixHint: "Add an intake label such as intake:small, then retry.",
-  },
   empty_body: {
     violatedRule: "Issue body must include implementation details before intake can start.",
     fixHint: "Add concrete task details to the issue body, then retry.",
