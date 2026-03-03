@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use tauri::State;
 
 const BRANCH_PREFIX: &str = "hostlocal";
 
@@ -218,6 +219,46 @@ pub fn create_runtime_issue_run(request: RuntimeEnqueueIssueRunRequest) -> Optio
     })
 }
 
+pub fn runtime_enqueue_issue_run_inner(
+    state: &RuntimeBoundarySharedState,
+    request: RuntimeEnqueueIssueRunRequest,
+) -> Result<RuntimeQueueOutcome, String> {
+    let _guard = state.lock()?;
+    let _ = request;
+    Ok(RuntimeQueueOutcome::not_found(
+        "runtime_queue_unavailable",
+        "Runtime queue is unavailable. Retry in a moment.",
+    ))
+}
+
+pub fn runtime_dequeue_issue_run_inner(
+    state: &RuntimeBoundarySharedState,
+    request: RuntimeDequeueIssueRunRequest,
+) -> Result<RuntimeQueueOutcome, String> {
+    let _guard = state.lock()?;
+    let _ = request;
+    Ok(RuntimeQueueOutcome::not_found(
+        "queued_run_not_found",
+        "Issue run was not queued for this repository.",
+    ))
+}
+
+#[tauri::command]
+pub async fn runtime_enqueue_issue_run(
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeEnqueueIssueRunRequest,
+) -> Result<RuntimeQueueOutcome, String> {
+    runtime_enqueue_issue_run_inner(&state, request)
+}
+
+#[tauri::command]
+pub async fn runtime_dequeue_issue_run(
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeDequeueIssueRunRequest,
+) -> Result<RuntimeQueueOutcome, String> {
+    runtime_dequeue_issue_run_inner(&state, request)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +410,100 @@ mod tests {
         );
         assert_eq!(repo_queue.queued_runs.len(), 1);
         assert_eq!(repo_queue.queued_runs[0].issue_number, 203);
+    }
+
+    #[test]
+    fn runtime_boundary_enqueue_command_outcomes_started_then_queued() {
+        let state = RuntimeBoundarySharedState::default();
+        let first = runtime_enqueue_issue_run_inner(
+            &state,
+            RuntimeEnqueueIssueRunRequest {
+                repository_full_name: "Owner/Repo".to_string(),
+                issue_number: 301,
+                issue_title: "First queued candidate".to_string(),
+            },
+        )
+        .expect("first enqueue");
+        assert_eq!(first.status, "started");
+        assert_eq!(first.queue_position, None);
+
+        let second = runtime_enqueue_issue_run_inner(
+            &state,
+            RuntimeEnqueueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 302,
+                issue_title: "Second queued candidate".to_string(),
+            },
+        )
+        .expect("second enqueue");
+        assert_eq!(second.status, "queued");
+        assert_eq!(second.queue_position, Some(1));
+    }
+
+    #[test]
+    fn runtime_boundary_dequeue_command_reports_removed_for_queued_issue() {
+        let state = RuntimeBoundarySharedState::default();
+        runtime_enqueue_issue_run_inner(
+            &state,
+            RuntimeEnqueueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 401,
+                issue_title: "Active issue".to_string(),
+            },
+        )
+        .expect("enqueue active");
+        runtime_enqueue_issue_run_inner(
+            &state,
+            RuntimeEnqueueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 402,
+                issue_title: "Queued issue".to_string(),
+            },
+        )
+        .expect("enqueue queued");
+
+        let outcome = runtime_dequeue_issue_run_inner(
+            &state,
+            RuntimeDequeueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 402,
+            },
+        )
+        .expect("dequeue queued issue");
+        assert_eq!(outcome.status, "removed");
+        assert_eq!(outcome.reason_code, None);
+        assert_eq!(outcome.fix_hint, None);
+    }
+
+    #[test]
+    fn runtime_boundary_dequeue_command_reports_not_found_with_reason_hint() {
+        let state = RuntimeBoundarySharedState::default();
+        runtime_enqueue_issue_run_inner(
+            &state,
+            RuntimeEnqueueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 501,
+                issue_title: "Active issue".to_string(),
+            },
+        )
+        .expect("enqueue active");
+
+        let outcome = runtime_dequeue_issue_run_inner(
+            &state,
+            RuntimeDequeueIssueRunRequest {
+                repository_full_name: "owner/repo".to_string(),
+                issue_number: 999,
+            },
+        )
+        .expect("dequeue missing issue");
+        assert_eq!(outcome.status, "not_found");
+        assert_eq!(
+            outcome.reason_code.as_deref(),
+            Some("queued_run_not_found")
+        );
+        assert_eq!(
+            outcome.fix_hint.as_deref(),
+            Some("Issue run was not queued for this repository.")
+        );
     }
 }
