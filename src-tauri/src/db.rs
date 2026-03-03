@@ -13,6 +13,37 @@ pub fn app_db_path(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error
     Ok(app_data_dir.join("hostlocal.sqlite"))
 }
 
+fn table_column_exists(
+    conn: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(format!("PRAGMA table_info({table_name})").as_str())?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_runtime_runs_pause_columns(conn: &Connection) -> rusqlite::Result<()> {
+    if !table_column_exists(conn, "runtime_runs", "is_paused")? {
+        conn.execute(
+            "ALTER TABLE runtime_runs
+             ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0 CHECK(is_paused IN (0, 1))",
+            [],
+        )?;
+    }
+
+    if !table_column_exists(conn, "runtime_runs", "paused_at")? {
+        conn.execute("ALTER TABLE runtime_runs ADD COLUMN paused_at TEXT", [])?;
+    }
+
+    Ok(())
+}
+
 pub fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "
@@ -48,7 +79,9 @@ pub fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
             fix_hint TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            terminal_at TEXT
+            terminal_at TEXT,
+            is_paused INTEGER NOT NULL DEFAULT 0 CHECK(is_paused IN (0, 1)),
+            paused_at TEXT
         );
         CREATE TABLE IF NOT EXISTS runtime_run_transitions (
             transition_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +119,8 @@ pub fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_runtime_run_events_summary
             ON runtime_run_events(run_id, include_in_summary, sequence DESC, event_id DESC);
         ",
-    )
+    )?;
+    ensure_runtime_runs_pause_columns(conn)
 }
 
 pub fn with_connection<T, F>(db_path: &Path, operation: F) -> Result<T, String>

@@ -818,6 +818,8 @@ struct RuntimePersistedRun {
     created_at: String,
     updated_at: String,
     terminal_at: Option<String>,
+    is_paused: bool,
+    paused_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -877,6 +879,8 @@ fn read_runtime_persisted_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<Runti
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
         terminal_at: row.get(13)?,
+        is_paused: row.get::<_, i64>(14)? != 0,
+        paused_at: row.get(15)?,
     })
 }
 
@@ -959,7 +963,9 @@ fn load_runtime_run_by_id(conn: &Connection, run_id: i64) -> rusqlite::Result<Ru
             fix_hint,
             created_at,
             updated_at,
-            terminal_at
+            terminal_at,
+            is_paused,
+            paused_at
          FROM runtime_runs
          WHERE run_id = ?1",
         params![run_id],
@@ -985,7 +991,9 @@ fn load_non_terminal_runtime_runs_ordered(
             fix_hint,
             created_at,
             updated_at,
-            terminal_at
+            terminal_at,
+            is_paused,
+            paused_at
          FROM runtime_runs
          WHERE terminal_status IS NULL
          ORDER BY repository_key ASC, queue_order ASC, run_id ASC",
@@ -1012,7 +1020,9 @@ fn load_recoverable_queued_runtime_runs_ordered(
             fix_hint,
             created_at,
             updated_at,
-            terminal_at
+            terminal_at,
+            is_paused,
+            paused_at
          FROM runtime_runs
          WHERE terminal_status IS NULL
            AND stage = ?1
@@ -1238,7 +1248,9 @@ fn load_active_runtime_run_by_issue(
             fix_hint,
             created_at,
             updated_at,
-            terminal_at
+            terminal_at,
+            is_paused,
+            paused_at
          FROM runtime_runs
          WHERE repository_key = ?1
            AND issue_number = ?2
@@ -1564,6 +1576,8 @@ fn reconcile_runtime_state_on_startup_inner(
                 terminal_status: run.terminal_status,
                 reason_code: run.reason_code,
                 fix_hint: run.fix_hint,
+                is_paused: run.is_paused,
+                paused_at: run.paused_at,
             }
         }));
     }
@@ -1627,6 +1641,8 @@ pub struct RuntimeRepositoryRunSnapshotItem {
     pub terminal_status: Option<String>,
     pub reason_code: Option<String>,
     pub fix_hint: Option<String>,
+    pub is_paused: bool,
+    pub paused_at: Option<String>,
     pub updated_at: String,
     pub terminal_at: Option<String>,
 }
@@ -1662,6 +1678,8 @@ pub struct RuntimeIssueRunHistoryItem {
     pub terminal_status: Option<String>,
     pub reason_code: Option<String>,
     pub fix_hint: Option<String>,
+    pub is_paused: bool,
+    pub paused_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub terminal_at: Option<String>,
@@ -1760,6 +1778,8 @@ pub struct RuntimeRunStageChangedEventPayload {
     pub terminal_status: Option<String>,
     pub reason_code: Option<String>,
     pub fix_hint: Option<String>,
+    pub is_paused: bool,
+    pub paused_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1821,6 +1841,8 @@ fn runtime_stage_changed_event_payload_inner(
         terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
         reason_code: run.reason_code,
         fix_hint: run.fix_hint,
+        is_paused: run.is_paused,
+        paused_at: run.paused_at,
     })
 }
 
@@ -1935,7 +1957,9 @@ fn runtime_get_repository_run_snapshot_inner(
                 r.fix_hint,
                 r.created_at,
                 r.updated_at,
-                r.terminal_at
+                r.terminal_at,
+                r.is_paused,
+                r.paused_at
              FROM runtime_runs r
              WHERE r.repository_key = ?1
                AND r.run_id = (
@@ -1970,6 +1994,8 @@ fn runtime_get_repository_run_snapshot_inner(
             terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
             reason_code: run.reason_code,
             fix_hint: run.fix_hint,
+            is_paused: run.is_paused,
+            paused_at: run.paused_at,
             updated_at: run.updated_at,
             terminal_at: run.terminal_at,
         })
@@ -2029,7 +2055,9 @@ fn runtime_get_issue_run_history_inner(
                 fix_hint,
                 created_at,
                 updated_at,
-                terminal_at
+                terminal_at,
+                is_paused,
+                paused_at
              FROM runtime_runs
              WHERE repository_key = ?1
                AND issue_number = ?2
@@ -2072,6 +2100,8 @@ fn runtime_get_issue_run_history_inner(
             terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
             reason_code: run.reason_code,
             fix_hint: run.fix_hint,
+            is_paused: run.is_paused,
+            paused_at: run.paused_at,
             created_at: run.created_at,
             updated_at: run.updated_at,
             terminal_at: run.terminal_at,
@@ -2120,7 +2150,9 @@ fn load_runtime_run_for_issue(
                     fix_hint,
                     created_at,
                     updated_at,
-                    terminal_at
+                    terminal_at,
+                    is_paused,
+                    paused_at
                  FROM runtime_runs
                  WHERE run_id = ?1
                    AND repository_key = ?2
@@ -2148,7 +2180,9 @@ fn load_runtime_run_for_issue(
             fix_hint,
             created_at,
             updated_at,
-            terminal_at
+            terminal_at,
+            is_paused,
+            paused_at
          FROM runtime_runs
          WHERE repository_key = ?1
            AND issue_number = ?2
@@ -2960,6 +2994,18 @@ mod tests {
         .is_ok()
     }
 
+    fn sqlite_column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(format!("PRAGMA table_info({table_name})").as_str())
+            .expect("prepare pragma table_info");
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query pragma table_info")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect pragma table_info rows");
+        columns.iter().any(|column| column == column_name)
+    }
+
     #[test]
     fn runtime_boundary_schema_creates_runtime_tables_and_indexes() {
         let conn = runtime_schema_test_connection();
@@ -3000,6 +3046,8 @@ mod tests {
             "index",
             "idx_runtime_run_events_summary"
         ));
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "is_paused"));
+        assert!(sqlite_column_exists(&conn, "runtime_runs", "paused_at"));
     }
 
     #[test]
