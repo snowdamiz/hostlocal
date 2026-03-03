@@ -1,3 +1,5 @@
+use crate::db::{with_connection, DbPath};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -132,6 +134,7 @@ impl GuardrailBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeIssueRun {
+    pub run_id: Option<i64>,
     pub repository_full_name: String,
     pub repository_key: String,
     pub issue_number: i64,
@@ -175,9 +178,13 @@ impl RuntimeBoundaryState {
         RuntimeQueueOutcome::queued(repository_state.queued_runs.len())
     }
 
-    pub fn dequeue_queued_run(&mut self, repository_key: &str, issue_number: i64) -> bool {
+    pub fn dequeue_queued_run(
+        &mut self,
+        repository_key: &str,
+        issue_number: i64,
+    ) -> Option<RuntimeIssueRun> {
         let Some(repository_state) = self.repos.get_mut(repository_key) else {
-            return false;
+            return None;
         };
 
         if repository_state
@@ -185,7 +192,7 @@ impl RuntimeBoundaryState {
             .as_ref()
             .is_some_and(|run| run.issue_number == issue_number)
         {
-            return false;
+            return None;
         }
 
         let Some(position) = repository_state
@@ -193,10 +200,15 @@ impl RuntimeBoundaryState {
             .iter()
             .position(|run| run.issue_number == issue_number)
         else {
-            return false;
+            return None;
         };
 
-        repository_state.queued_runs.remove(position).is_some()
+        let removed = repository_state.queued_runs.remove(position);
+        if repository_state.active_run.is_none() && repository_state.queued_runs.is_empty() {
+            self.repos.remove(repository_key);
+        }
+
+        removed
     }
 
     pub fn finalize_active_and_promote_next(
@@ -318,6 +330,7 @@ pub fn create_runtime_issue_run(request: RuntimeEnqueueIssueRunRequest) -> Optio
 
     let issue_branch_name = issue_branch_name(request.issue_number, &request.issue_title);
     Some(RuntimeIssueRun {
+        run_id: None,
         repository_full_name: request.repository_full_name.trim().to_string(),
         repository_key,
         issue_number: request.issue_number,
@@ -428,6 +441,20 @@ impl RuntimeRunStage {
             "publishing" => Some(Self::Publishing),
             _ => None,
         }
+    }
+
+    fn next(self) -> Option<Self> {
+        match self {
+            RuntimeRunStage::Queued => Some(RuntimeRunStage::Preparing),
+            RuntimeRunStage::Preparing => Some(RuntimeRunStage::Coding),
+            RuntimeRunStage::Coding => Some(RuntimeRunStage::Validating),
+            RuntimeRunStage::Validating => Some(RuntimeRunStage::Publishing),
+            RuntimeRunStage::Publishing => None,
+        }
+    }
+
+    fn can_transition_to(self, next: Self) -> bool {
+        self.next().is_some_and(|expected_next| expected_next == next)
     }
 }
 
@@ -545,6 +572,341 @@ struct RuntimePersistedTransition {
     created_at: String,
 }
 
+fn runtime_invariant_error(message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName(message.into())
+}
+
+fn read_runtime_persisted_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RuntimePersistedRun> {
+    let stage_raw: String = row.get(7)?;
+    let stage = RuntimeRunStage::from_db(&stage_raw)
+        .ok_or_else(|| runtime_invariant_error(format!("invalid persisted stage: {stage_raw}")))?;
+    let terminal_status_raw: Option<String> = row.get(8)?;
+    let terminal_status = terminal_status_raw
+        .map(|value| {
+            RuntimeTerminalStatus::from_db(&value).ok_or_else(|| {
+                runtime_invariant_error(format!("invalid persisted terminal status: {value}"))
+            })
+        })
+        .transpose()?;
+
+    Ok(RuntimePersistedRun {
+        run_id: row.get(0)?,
+        repository_key: row.get(1)?,
+        repository_full_name: row.get(2)?,
+        issue_number: row.get(3)?,
+        issue_title: row.get(4)?,
+        issue_branch_name: row.get(5)?,
+        queue_order: row.get(6)?,
+        stage,
+        terminal_status,
+        reason_code: row.get(9)?,
+        fix_hint: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        terminal_at: row.get(13)?,
+    })
+}
+
+fn load_runtime_run_by_id(conn: &Connection, run_id: i64) -> rusqlite::Result<RuntimePersistedRun> {
+    conn.query_row(
+        "SELECT
+            run_id,
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at,
+            updated_at,
+            terminal_at
+         FROM runtime_runs
+         WHERE run_id = ?1",
+        params![run_id],
+        read_runtime_persisted_run,
+    )
+}
+
+fn load_active_runtime_run_by_issue(
+    conn: &Connection,
+    repository_key: &str,
+    issue_number: i64,
+) -> rusqlite::Result<Option<RuntimePersistedRun>> {
+    conn.query_row(
+        "SELECT
+            run_id,
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at,
+            updated_at,
+            terminal_at
+         FROM runtime_runs
+         WHERE repository_key = ?1
+           AND issue_number = ?2
+           AND terminal_status IS NULL
+         ORDER BY run_id DESC
+         LIMIT 1",
+        params![repository_key, issue_number],
+        read_runtime_persisted_run,
+    )
+    .optional()
+}
+
+fn next_runtime_queue_order(conn: &Connection, repository_key: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(queue_order), -1) + 1
+         FROM runtime_runs
+         WHERE repository_key = ?1
+           AND terminal_status IS NULL",
+        params![repository_key],
+        |row| row.get(0),
+    )
+}
+
+fn insert_runtime_run(conn: &Connection, run: &RuntimeIssueRun) -> Result<RuntimePersistedRun, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let queue_order = next_runtime_queue_order(&tx, &run.repository_key).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO runtime_runs (
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            run.repository_key.as_str(),
+            run.repository_full_name.as_str(),
+            run.issue_number,
+            run.issue_title.as_str(),
+            run.issue_branch_name.as_str(),
+            queue_order,
+            RuntimeRunStage::Queued.as_str()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let run_id = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO runtime_run_transitions (
+            run_id,
+            sequence,
+            stage
+         ) VALUES (?1, ?2, ?3)",
+        params![run_id, 1_i64, RuntimeRunStage::Queued.as_str()],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())
+}
+
+fn resolve_runtime_run_id(conn: &Connection, run: &RuntimeIssueRun) -> Result<i64, String> {
+    if let Some(run_id) = run.run_id {
+        return Ok(run_id);
+    }
+
+    load_active_runtime_run_by_issue(conn, &run.repository_key, run.issue_number)
+        .map_err(|e| e.to_string())?
+        .map(|persisted| persisted.run_id)
+        .ok_or_else(|| "missing persisted runtime run".to_string())
+}
+
+fn transition_run_stage(
+    conn: &Connection,
+    run_id: i64,
+    expected_stage: RuntimeRunStage,
+    next_stage: Option<RuntimeRunStage>,
+    terminal_status: Option<RuntimeTerminalStatus>,
+    reason_code: Option<&str>,
+    fix_hint: Option<&str>,
+) -> Result<RuntimePersistedRun, String> {
+    if next_stage.is_none() && terminal_status.is_none() {
+        return Err("transition must update stage or set terminal status".to_string());
+    }
+
+    if terminal_status.is_none() && reason_code.is_some() {
+        return Err("reason code requires terminal status".to_string());
+    }
+
+    if terminal_status.is_none() && fix_hint.is_some() {
+        return Err("fix hint requires terminal status".to_string());
+    }
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let current = load_runtime_run_by_id(&tx, run_id).map_err(|e| e.to_string())?;
+    if current.terminal_status.is_some() {
+        return Err("runtime run already finalized".to_string());
+    }
+
+    if current.stage != expected_stage {
+        return Err(format!(
+            "runtime transition expected {:?} but found {:?}",
+            expected_stage, current.stage
+        ));
+    }
+
+    if let Some(target_stage) = next_stage {
+        if !expected_stage.can_transition_to(target_stage) {
+            return Err(format!(
+                "invalid runtime stage transition {:?} -> {:?}",
+                expected_stage, target_stage
+            ));
+        }
+    }
+
+    let applied_stage = next_stage.unwrap_or(expected_stage);
+    let next_sequence: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(sequence), 0) + 1
+             FROM runtime_run_transitions
+             WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let terminal_status_value = terminal_status.map(RuntimeTerminalStatus::as_str);
+    tx.execute(
+        "UPDATE runtime_runs
+         SET stage = ?1,
+             terminal_status = ?2,
+             reason_code = ?3,
+             fix_hint = ?4,
+             updated_at = CURRENT_TIMESTAMP,
+             terminal_at = CASE
+                WHEN ?2 IS NULL THEN terminal_at
+                ELSE COALESCE(terminal_at, CURRENT_TIMESTAMP)
+             END
+         WHERE run_id = ?5",
+        params![
+            applied_stage.as_str(),
+            terminal_status_value,
+            reason_code,
+            fix_hint,
+            run_id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO runtime_run_transitions (
+            run_id,
+            sequence,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            run_id,
+            next_sequence,
+            applied_stage.as_str(),
+            terminal_status_value,
+            reason_code,
+            fix_hint
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())
+}
+
+fn persist_insert_runtime_run(db_path: &Path, run: &RuntimeIssueRun) -> Result<RuntimePersistedRun, String> {
+    with_connection(db_path, |conn| {
+        insert_runtime_run(conn, run).map_err(runtime_invariant_error)
+    })
+}
+
+fn persist_transition_runtime_run_stage(
+    db_path: &Path,
+    run: &RuntimeIssueRun,
+    expected_stage: RuntimeRunStage,
+    next_stage: RuntimeRunStage,
+) -> Result<RuntimePersistedRun, String> {
+    with_connection(db_path, |conn| {
+        let run_id = resolve_runtime_run_id(conn, run).map_err(runtime_invariant_error)?;
+        transition_run_stage(
+            conn,
+            run_id,
+            expected_stage,
+            Some(next_stage),
+            None,
+            None,
+            None,
+        )
+        .map_err(runtime_invariant_error)
+    })
+}
+
+fn persist_finalize_runtime_run(
+    db_path: &Path,
+    run: &RuntimeIssueRun,
+    terminal_status: RuntimeTerminalStatus,
+    reason_code: Option<&str>,
+    fix_hint: Option<&str>,
+) -> Result<RuntimePersistedRun, String> {
+    with_connection(db_path, |conn| {
+        let run_id = resolve_runtime_run_id(conn, run).map_err(runtime_invariant_error)?;
+        let current = load_runtime_run_by_id(conn, run_id)?;
+        transition_run_stage(
+            conn,
+            run_id,
+            current.stage,
+            None,
+            Some(terminal_status),
+            reason_code,
+            fix_hint,
+        )
+        .map_err(runtime_invariant_error)
+    })
+}
+
+fn persist_advance_runtime_run_to_publishing(
+    db_path: &Path,
+    run: &RuntimeIssueRun,
+) -> Result<RuntimePersistedRun, String> {
+    with_connection(db_path, |conn| {
+        let run_id = resolve_runtime_run_id(conn, run).map_err(runtime_invariant_error)?;
+        let mut current = load_runtime_run_by_id(conn, run_id)?;
+        while current.stage != RuntimeRunStage::Publishing {
+            let Some(next_stage) = current.stage.next() else {
+                break;
+            };
+            current = transition_run_stage(
+                conn,
+                run_id,
+                current.stage,
+                Some(next_stage),
+                None,
+                None,
+                None,
+            )
+            .map_err(runtime_invariant_error)?;
+        }
+
+        Ok(current)
+    })
+}
+
+fn runtime_transition_failed_outcome() -> RuntimeQueueOutcome {
+    RuntimeQueueOutcome::startup_failed(
+        "runtime_transition_persist_failed",
+        "Runtime state persistence failed while transitioning run stage.",
+    )
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeRunEvidence {
@@ -618,9 +980,28 @@ fn finalize_run(
     run: RuntimeIssueRun,
     workspace_root: Option<PathBuf>,
     terminal_status: RuntimeTerminalStatus,
-    blocked_reason_code: Option<String>,
+    reason_code: Option<String>,
+    fix_hint: Option<String>,
 ) {
-    let _ = record_terminal_evidence(&run, terminal_status, blocked_reason_code);
+    let db_path = app.state::<DbPath>();
+    if terminal_status == RuntimeTerminalStatus::Success {
+        let _ = persist_advance_runtime_run_to_publishing(&db_path.0, &run);
+    }
+    if persist_finalize_runtime_run(
+        &db_path.0,
+        &run,
+        terminal_status,
+        reason_code.as_deref(),
+        fix_hint.as_deref(),
+    )
+    .is_err()
+    {
+        let _ = record_terminal_evidence(&run, terminal_status, reason_code);
+        let _ = finalize_workspace_cleanup(workspace_root.as_deref());
+        return;
+    }
+
+    let _ = record_terminal_evidence(&run, terminal_status, reason_code);
     let _ = finalize_workspace_cleanup(workspace_root.as_deref());
 
     let next_run = {
@@ -640,12 +1021,14 @@ fn finalize_run(
                 RuntimeTerminalStatus::Failed
             };
             let next_reason_code = start_error.outcome.reason_code.clone();
+            let next_fix_hint = start_error.outcome.fix_hint.clone();
             finalize_run(
                 app,
                 next_run,
                 start_error.workspace_root,
                 next_terminal_status,
                 next_reason_code,
+                next_fix_hint,
             );
         }
     }
@@ -703,6 +1086,7 @@ fn spawn_sidecar_for_run(
             Some(workspace_for_finalize),
             terminal_status,
             None,
+            None,
         );
     });
 
@@ -710,7 +1094,29 @@ fn spawn_sidecar_for_run(
 }
 
 fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRunError> {
+    let db_path = app.state::<DbPath>();
+    persist_transition_runtime_run_stage(
+        &db_path.0,
+        &run,
+        RuntimeRunStage::Queued,
+        RuntimeRunStage::Preparing,
+    )
+    .map_err(|_| StartRunError::with_outcome(runtime_transition_failed_outcome(), None))?;
+
     let prepared = prepare_workspace_for_run(&run)?;
+    persist_transition_runtime_run_stage(
+        &db_path.0,
+        &run,
+        RuntimeRunStage::Preparing,
+        RuntimeRunStage::Coding,
+    )
+    .map_err(|_| {
+        StartRunError::with_outcome(
+            runtime_transition_failed_outcome(),
+            Some(prepared.workspace_root.clone()),
+        )
+    })?;
+
     spawn_sidecar_for_run(app, &run, &prepared)
 }
 
@@ -755,7 +1161,7 @@ pub fn runtime_dequeue_issue_run_inner(
         let mut queue = state.lock()?;
         queue.dequeue_queued_run(&repository_key, request.issue_number)
     };
-    if removed {
+    if removed.is_some() {
         return Ok(RuntimeQueueOutcome::removed());
     }
 
@@ -771,15 +1177,31 @@ pub async fn runtime_enqueue_issue_run(
     state: State<'_, RuntimeBoundarySharedState>,
     request: RuntimeEnqueueIssueRunRequest,
 ) -> Result<RuntimeQueueOutcome, String> {
-    let Some(run) = create_runtime_issue_run(request) else {
+    let Some(mut run) = create_runtime_issue_run(request) else {
         return Ok(RuntimeQueueOutcome::not_found(
             "invalid_runtime_request",
             "Select a valid repository issue before starting a run.",
         ));
     };
 
+    let db_path = app.state::<DbPath>();
+    let persisted = persist_insert_runtime_run(&db_path.0, &run)?;
+    run.run_id = Some(persisted.run_id);
+
     let outcome = {
-        let mut queue = state.lock()?;
+        let mut queue = match state.lock() {
+            Ok(queue) => queue,
+            Err(error) => {
+                let _ = persist_finalize_runtime_run(
+                    &db_path.0,
+                    &run,
+                    RuntimeTerminalStatus::Failed,
+                    Some("runtime_queue_state_unavailable"),
+                    Some("Retry enqueue after restarting HostLocal."),
+                );
+                return Err(error);
+            }
+        };
         queue.enqueue_run(run.clone())
     };
     if outcome.status != "started" {
@@ -792,13 +1214,15 @@ pub async fn runtime_enqueue_issue_run(
         } else {
             RuntimeTerminalStatus::Failed
         };
-        let blocked_reason_code = start_error.outcome.reason_code.clone();
+        let reason_code = start_error.outcome.reason_code.clone();
+        let fix_hint = start_error.outcome.fix_hint.clone();
         finalize_run(
             &app,
             run,
             start_error.workspace_root,
             terminal_status,
-            blocked_reason_code,
+            reason_code,
+            fix_hint,
         );
         return Ok(start_error.outcome);
     }
@@ -808,10 +1232,45 @@ pub async fn runtime_enqueue_issue_run(
 
 #[tauri::command]
 pub async fn runtime_dequeue_issue_run(
+    app: AppHandle,
     state: State<'_, RuntimeBoundarySharedState>,
     request: RuntimeDequeueIssueRunRequest,
 ) -> Result<RuntimeQueueOutcome, String> {
-    runtime_dequeue_issue_run_inner(&state, request)
+    let Some(repository_key) = normalize_repository_key(&request.repository_full_name) else {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before removing a queued run.",
+        ));
+    };
+
+    if request.issue_number <= 0 {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before removing a queued run.",
+        ));
+    }
+
+    let removed_run = {
+        let mut queue = state.lock()?;
+        queue.dequeue_queued_run(&repository_key, request.issue_number)
+    };
+    let Some(removed_run) = removed_run else {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "queued_run_not_found",
+            "Issue run was not queued for this repository.",
+        ));
+    };
+
+    let db_path = app.state::<DbPath>();
+    let _ = persist_finalize_runtime_run(
+        &db_path.0,
+        &removed_run,
+        RuntimeTerminalStatus::Cancelled,
+        Some("runtime_queue_removed"),
+        Some("Issue run was removed from queue before execution."),
+    )?;
+
+    Ok(RuntimeQueueOutcome::removed())
 }
 
 #[cfg(test)]
@@ -894,12 +1353,16 @@ mod tests {
     }
 
     fn transition_run_stage_under_test(
-        _conn: &Connection,
-        _run_id: i64,
-        _expected_stage: &str,
-        _next_stage: &str,
+        conn: &Connection,
+        run_id: i64,
+        expected_stage: &str,
+        next_stage: &str,
     ) -> Result<(), String> {
-        Err("not implemented".to_string())
+        let expected = RuntimeRunStage::from_db(expected_stage)
+            .ok_or_else(|| format!("invalid test expected stage: {expected_stage}"))?;
+        let next = RuntimeRunStage::from_db(next_stage)
+            .ok_or_else(|| format!("invalid test next stage: {next_stage}"))?;
+        transition_run_stage(conn, run_id, expected, Some(next), None, None, None).map(|_| ())
     }
 
     fn run_stage_value(conn: &Connection, run_id: i64) -> String {
@@ -1095,6 +1558,25 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_persistence_assigns_monotonic_queue_order_per_repository() {
+        let conn = runtime_schema_test_connection();
+        let first = build_run("owner/repo", 3011, "Queue order first");
+        let second = build_run("owner/repo", 3012, "Queue order second");
+        let other_repo = build_run("owner/other", 3013, "Queue order other repo");
+
+        let persisted_first = insert_runtime_run(&conn, &first).expect("persist first run");
+        let persisted_second = insert_runtime_run(&conn, &second).expect("persist second run");
+        let persisted_other = insert_runtime_run(&conn, &other_repo).expect("persist other run");
+
+        assert_eq!(persisted_first.queue_order, 0);
+        assert_eq!(persisted_second.queue_order, 1);
+        assert_eq!(
+            persisted_other.queue_order, 0,
+            "queue order should be scoped per repository"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_normalizes_repository_keys_table() {
         let cases = [
             NormalizeRepositoryCase {
@@ -1206,8 +1688,8 @@ mod tests {
         state.enqueue_run(second);
         state.enqueue_run(third);
 
-        assert!(state.dequeue_queued_run("owner/repo", 202));
-        assert!(!state.dequeue_queued_run("owner/repo", 201));
+        assert!(state.dequeue_queued_run("owner/repo", 202).is_some());
+        assert!(state.dequeue_queued_run("owner/repo", 201).is_none());
 
         let repo_queue = state
             .repository_queue("owner/repo")
