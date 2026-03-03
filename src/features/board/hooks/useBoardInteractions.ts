@@ -5,12 +5,16 @@ import {
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubRevertIssueIntake,
+  runtimeAbortIssueRun,
   runtimeDequeueIssueRun,
   runtimeEnqueueIssueRun,
   runtimeGetIssueRunHistory,
   runtimeGetIssueRunSummary,
   runtimeGetIssueRunTelemetry,
+  runtimePauseIssueRun,
   runtimeGetRepositoryRunSnapshot,
+  runtimeResumeIssueRun,
+  runtimeSteerIssueRun,
   type RuntimeDequeueIssueRunOutcome,
   type GithubIssueIntakeOutcome,
   type GithubRepository,
@@ -22,12 +26,14 @@ import {
   type RuntimeIssueRunTelemetry,
   type RuntimeRepositoryRunSnapshot,
   type RuntimeRepositoryRunSnapshotItem,
+  type RuntimeRunControlOutcome,
   type RuntimeRunTelemetryEventPayload,
   type RuntimeRunStageChangedEventPayload,
   type RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../../../intake/intake-state";
 import { pushIntakeRejectionToast } from "../../../intake/toast-store";
+import { pushRuntimeControlToast } from "../../../runtime-control/toast-store";
 import { AGENT_IN_PROGRESS_LABEL_PREFIX, inferDefaultColumn } from "../column-inference";
 import type {
   BoardDragSource,
@@ -53,6 +59,19 @@ export type RuntimeSnapshotByIssueNumber = Record<number, RuntimeRepositoryRunSn
 export type RuntimeHistoryByIssueNumber = Record<number, RuntimeIssueRunHistoryItem[]>;
 export type RuntimeTelemetryByIssueNumber = Record<number, RuntimeRunTelemetryEventPayload[]>;
 export type RuntimeSummaryByIssueNumber = Record<number, RuntimeIssueRunSummary | null>;
+export type RuntimeControlAction = "pause" | "resume" | "abort" | "steer";
+
+export interface RuntimeControlEligibility {
+  canPauseRun: boolean;
+  canResumeRun: boolean;
+  canAbortRun: boolean;
+  canSteerRun: boolean;
+}
+
+export interface RuntimeControlAvailability extends RuntimeControlEligibility {
+  pendingAction: RuntimeControlAction | null;
+  hasPendingAction: boolean;
+}
 
 const RUNTIME_SUMMARY_VALIDATION_STATUSES: RuntimeIssueRunSummaryValidationStatus[] = [
   "pass",
@@ -296,6 +315,255 @@ export function normalizeRuntimeIssueRunSummary(summary: RuntimeIssueRunSummary)
   };
 }
 
+const RUNTIME_CONTROL_ACTION_LABELS: Readonly<Record<RuntimeControlAction, string>> = {
+  pause: "Pause run",
+  resume: "Resume run",
+  abort: "Abort run",
+  steer: "Send steering",
+};
+
+const createRuntimeControlOutcome = (
+  overrides: Partial<RuntimeRunControlOutcome>,
+): RuntimeRunControlOutcome => ({
+  acknowledged: false,
+  runId: null,
+  isPaused: null,
+  reasonCode: null,
+  fixHint: null,
+  ...overrides,
+});
+
+const resolveRuntimeControlAcknowledgedMessage = (action: RuntimeControlAction) => {
+  switch (action) {
+    case "pause":
+      return "Run paused by user request.";
+    case "resume":
+      return "Run resumed by user request.";
+    case "abort":
+      return "Abort acknowledged. Finalizing run as cancelled.";
+    case "steer":
+      return "Steering instruction acknowledged.";
+    default:
+      return "Runtime control action acknowledged.";
+  }
+};
+
+const resolveRuntimeControlRejectedMessage = (action: RuntimeControlAction) =>
+  `${RUNTIME_CONTROL_ACTION_LABELS[action]} rejected.`;
+
+const resolveRuntimeControlGuardOutcome = (
+  action: RuntimeControlAction,
+  runtime: RuntimeRepositoryRunSnapshotItem,
+  eligibility: RuntimeControlEligibility,
+): RuntimeRunControlOutcome | null => {
+  if (action === "pause" && !eligibility.canPauseRun) {
+    return createRuntimeControlOutcome({
+      runId: runtime.runId,
+      isPaused: runtime.isPaused,
+      reasonCode: "runtime_pause_not_active",
+      fixHint: "Only active runs can be paused.",
+    });
+  }
+
+  if (action === "resume" && !eligibility.canResumeRun) {
+    return createRuntimeControlOutcome({
+      runId: runtime.runId,
+      isPaused: runtime.isPaused,
+      reasonCode:
+        !runtime.terminalStatus && runtime.stage !== "queued" && !runtime.isPaused
+          ? "runtime_run_not_paused"
+          : "runtime_resume_not_active",
+      fixHint:
+        !runtime.terminalStatus && runtime.stage !== "queued" && !runtime.isPaused
+          ? "Run is already active; resume is only available for paused runs."
+          : "Only active paused runs can be resumed.",
+    });
+  }
+
+  if (action === "abort" && !eligibility.canAbortRun) {
+    return createRuntimeControlOutcome({
+      runId: runtime.runId,
+      isPaused: runtime.isPaused,
+      reasonCode: "runtime_abort_not_active",
+      fixHint: "Abort is only available for active or paused runs.",
+    });
+  }
+
+  if (action === "steer" && !eligibility.canSteerRun) {
+    return createRuntimeControlOutcome({
+      runId: runtime.runId,
+      isPaused: runtime.isPaused,
+      reasonCode: runtime.isPaused ? "runtime_steer_paused" : "runtime_steer_not_active",
+      fixHint: runtime.isPaused
+        ? "Resume the paused run before sending steering instructions."
+        : "Steering is only available for active runs.",
+    });
+  }
+
+  return null;
+};
+
+export function resolveRuntimeControlEligibility(
+  runtime: RuntimeRepositoryRunSnapshotItem | null | undefined,
+): RuntimeControlEligibility {
+  if (!runtime || runtime.terminalStatus) {
+    return {
+      canPauseRun: false,
+      canResumeRun: false,
+      canAbortRun: false,
+      canSteerRun: false,
+    };
+  }
+
+  const isActive = runtime.stage !== "queued";
+  if (!isActive) {
+    return {
+      canPauseRun: false,
+      canResumeRun: false,
+      canAbortRun: false,
+      canSteerRun: false,
+    };
+  }
+
+  return {
+    canPauseRun: !runtime.isPaused,
+    canResumeRun: runtime.isPaused,
+    canAbortRun: true,
+    canSteerRun: !runtime.isPaused,
+  };
+}
+
+export interface ExecuteRuntimeControlActionInput {
+  action: RuntimeControlAction;
+  repositoryFullName: string;
+  issueNumber: number;
+  runtime: RuntimeRepositoryRunSnapshotItem;
+  pendingAction: RuntimeControlAction | null;
+  reason?: string | null;
+  instruction?: string;
+}
+
+export interface ExecuteRuntimeControlActionDependencies {
+  runtimePauseIssueRun: typeof runtimePauseIssueRun;
+  runtimeResumeIssueRun: typeof runtimeResumeIssueRun;
+  runtimeAbortIssueRun: typeof runtimeAbortIssueRun;
+  runtimeSteerIssueRun: typeof runtimeSteerIssueRun;
+  pushRuntimeControlToast: typeof pushRuntimeControlToast;
+  hydrateRuntimeSnapshot: (repositoryFullName: string) => Promise<void>;
+  hydrateRuntimeHistoryForIssue: (repositoryFullName: string, issueNumber: number) => Promise<void>;
+  hydrateRuntimeTelemetryForIssue: (
+    repositoryFullName: string,
+    issueNumber: number,
+    runId?: number,
+  ) => Promise<void>;
+  hydrateRuntimeSummaryForIssue: (
+    repositoryFullName: string,
+    issueNumber: number,
+    runId?: number,
+  ) => Promise<void>;
+}
+
+const invokeRuntimeControlAction = async (
+  input: ExecuteRuntimeControlActionInput,
+  dependencies: ExecuteRuntimeControlActionDependencies,
+): Promise<RuntimeRunControlOutcome> => {
+  switch (input.action) {
+    case "pause":
+      return dependencies.runtimePauseIssueRun({
+        repositoryFullName: input.repositoryFullName,
+        issueNumber: input.issueNumber,
+      });
+    case "resume":
+      return dependencies.runtimeResumeIssueRun({
+        repositoryFullName: input.repositoryFullName,
+        issueNumber: input.issueNumber,
+      });
+    case "abort":
+      return dependencies.runtimeAbortIssueRun({
+        repositoryFullName: input.repositoryFullName,
+        issueNumber: input.issueNumber,
+        reason: input.reason ?? null,
+      });
+    case "steer":
+      return dependencies.runtimeSteerIssueRun({
+        repositoryFullName: input.repositoryFullName,
+        issueNumber: input.issueNumber,
+        instruction: input.instruction ?? "",
+      });
+    default:
+      return createRuntimeControlOutcome({
+        runId: input.runtime.runId,
+        isPaused: input.runtime.isPaused,
+        reasonCode: "runtime_control_unknown_action",
+        fixHint: "Select a valid runtime control action before retrying.",
+      });
+  }
+};
+
+const refreshRuntimeControlScope = async (
+  input: ExecuteRuntimeControlActionInput,
+  outcome: RuntimeRunControlOutcome,
+  dependencies: ExecuteRuntimeControlActionDependencies,
+) => {
+  const runId = outcome.runId ?? input.runtime.runId;
+  await Promise.allSettled([
+    dependencies.hydrateRuntimeSnapshot(input.repositoryFullName),
+    dependencies.hydrateRuntimeHistoryForIssue(input.repositoryFullName, input.issueNumber),
+    dependencies.hydrateRuntimeTelemetryForIssue(input.repositoryFullName, input.issueNumber, runId),
+    dependencies.hydrateRuntimeSummaryForIssue(input.repositoryFullName, input.issueNumber, runId),
+  ]);
+};
+
+const emitRuntimeControlToast = (
+  input: ExecuteRuntimeControlActionInput,
+  outcome: RuntimeRunControlOutcome,
+  dependencies: ExecuteRuntimeControlActionDependencies,
+) => {
+  dependencies.pushRuntimeControlToast({
+    action: input.action,
+    actionLabel: RUNTIME_CONTROL_ACTION_LABELS[input.action],
+    status: outcome.acknowledged ? "accepted" : "rejected",
+    severity: outcome.acknowledged ? "success" : "warning",
+    reasonCode: outcome.reasonCode,
+    fixHint: outcome.fixHint,
+    message: outcome.acknowledged
+      ? resolveRuntimeControlAcknowledgedMessage(input.action)
+      : resolveRuntimeControlRejectedMessage(input.action),
+  });
+};
+
+export async function executeRuntimeControlAction(
+  input: ExecuteRuntimeControlActionInput,
+  dependencies: ExecuteRuntimeControlActionDependencies,
+): Promise<RuntimeRunControlOutcome | null> {
+  if (input.pendingAction) {
+    return null;
+  }
+
+  const eligibility = resolveRuntimeControlEligibility(input.runtime);
+  const guardedOutcome = resolveRuntimeControlGuardOutcome(input.action, input.runtime, eligibility);
+  if (guardedOutcome) {
+    emitRuntimeControlToast(input, guardedOutcome, dependencies);
+    return guardedOutcome;
+  }
+
+  let outcome: RuntimeRunControlOutcome;
+  try {
+    outcome = await invokeRuntimeControlAction(input, dependencies);
+  } catch (error) {
+    outcome = createRuntimeControlOutcome({
+      runId: input.runtime.runId,
+      isPaused: input.runtime.isPaused,
+      reasonCode: "runtime_control_command_failed",
+      fixHint: formatInvokeError(error, "Runtime control command failed. Retry after runtime connectivity is restored."),
+    });
+  }
+
+  await refreshRuntimeControlScope(input, outcome, dependencies);
+  emitRuntimeControlToast(input, outcome, dependencies);
+  return outcome;
+}
+
 export function mergeRuntimeStageChangedPayload(
   current: RuntimeSnapshotByIssueNumber,
   payload: RuntimeRunStageChangedEventPayload,
@@ -313,6 +581,8 @@ export function mergeRuntimeStageChangedPayload(
       terminalStatus: payload.terminalStatus ?? null,
       reasonCode: payload.reasonCode ?? null,
       fixHint: payload.fixHint ?? null,
+      isPaused: payload.isPaused,
+      pausedAt: payload.pausedAt ?? null,
       updatedAt: previous?.updatedAt ?? "",
       terminalAt: payload.terminalStatus ? previous?.terminalAt ?? null : null,
     },
@@ -397,6 +667,7 @@ export function useBoardInteractions(
   const [runtimeHistoryByIssueNumber, setRuntimeHistoryByIssueNumber] = createSignal<RuntimeHistoryByIssueNumber>({});
   const [runtimeTelemetryByIssueNumber, setRuntimeTelemetryByIssueNumber] = createSignal<RuntimeTelemetryByIssueNumber>({});
   const [runtimeSummaryByIssueNumber, setRuntimeSummaryByIssueNumber] = createSignal<RuntimeSummaryByIssueNumber>({});
+  const [runtimeControlPendingAction, setRuntimeControlPendingAction] = createSignal<RuntimeControlAction | null>(null);
 
   let repositoryItemsRequestId = 0;
   let runtimeSnapshotRequestId = 0;
@@ -456,6 +727,28 @@ export function useBoardInteractions(
     return runtimeSummaryByIssueNumber()[item.number] ?? null;
   });
 
+  const selectedRuntimeControlAvailability = createMemo<RuntimeControlAvailability>(() => {
+    const eligibility = resolveRuntimeControlEligibility(selectedBoardRuntime());
+    const pendingAction = runtimeControlPendingAction();
+    const hasPendingAction = pendingAction !== null;
+    if (!hasPendingAction) {
+      return {
+        ...eligibility,
+        pendingAction,
+        hasPendingAction,
+      };
+    }
+
+    return {
+      canPauseRun: false,
+      canResumeRun: false,
+      canAbortRun: false,
+      canSteerRun: false,
+      pendingAction,
+      hasPendingAction,
+    };
+  });
+
   const clearRepositoryItemState = () => {
     activeHistoryKey = null;
     activeTelemetryKey = null;
@@ -482,6 +775,7 @@ export function useBoardInteractions(
     setRuntimeHistoryByIssueNumber({});
     setRuntimeTelemetryByIssueNumber({});
     setRuntimeSummaryByIssueNumber({});
+    setRuntimeControlPendingAction(null);
     setRepositoryItemsError(null);
     setIsRepositoryItemsLoading(false);
     setOptimisticColumnByItemId({});
@@ -791,6 +1085,61 @@ export function useBoardInteractions(
       console.warn("[board] runtime telemetry listener setup failed", error);
     }
   };
+
+  const runSelectedRuntimeControlAction = async (
+    action: RuntimeControlAction,
+    options: {
+      reason?: string | null;
+      instruction?: string;
+    } = {},
+  ): Promise<RuntimeRunControlOutcome | null> => {
+    const repository = selectedRepository();
+    const item = selectedBoardItem();
+    const runtime = selectedBoardRuntime();
+    if (!repository || !item || !runtime) {
+      return null;
+    }
+
+    if (runtimeControlPendingAction() !== null) {
+      return null;
+    }
+
+    setRuntimeControlPendingAction(action);
+    try {
+      return await executeRuntimeControlAction(
+        {
+          action,
+          repositoryFullName: repository.fullName,
+          issueNumber: item.number,
+          runtime,
+          pendingAction: null,
+          reason: options.reason ?? null,
+          instruction: options.instruction,
+        },
+        {
+          runtimePauseIssueRun,
+          runtimeResumeIssueRun,
+          runtimeAbortIssueRun,
+          runtimeSteerIssueRun,
+          pushRuntimeControlToast,
+          hydrateRuntimeSnapshot,
+          hydrateRuntimeHistoryForIssue,
+          hydrateRuntimeTelemetryForIssue,
+          hydrateRuntimeSummaryForIssue,
+        },
+      );
+    } finally {
+      setRuntimeControlPendingAction((current) => (current === action ? null : current));
+    }
+  };
+
+  const onPauseRun = () => runSelectedRuntimeControlAction("pause");
+
+  const onResumeRun = () => runSelectedRuntimeControlAction("resume");
+
+  const onAbortRun = (reason?: string | null) => runSelectedRuntimeControlAction("abort", { reason: reason ?? null });
+
+  const onSteerRun = (instruction: string) => runSelectedRuntimeControlAction("steer", { instruction });
 
   const openGithubItemPage = async (url: string) => {
     try {
@@ -1196,6 +1545,7 @@ export function useBoardInteractions(
     }
     pointerDragState = null;
     clearIntakeAttempts(intakeAttemptState);
+    setRuntimeControlPendingAction(null);
     document.documentElement.classList.remove("is-card-dragging");
     window.removeEventListener("pointermove", handleWindowPointerMove);
     window.removeEventListener("pointerup", handleWindowPointerUp);
@@ -1221,6 +1571,12 @@ export function useBoardInteractions(
     selectedBoardRuntimeHistory,
     selectedBoardRuntimeTelemetry,
     selectedBoardRuntimeSummary,
+    selectedRuntimeControlAvailability,
+    runtimeControlPendingAction,
+    onPauseRun,
+    onResumeRun,
+    onAbortRun,
+    onSteerRun,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,
