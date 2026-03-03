@@ -289,6 +289,7 @@ pub async fn runtime_dequeue_issue_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[derive(Debug)]
     struct NormalizeRepositoryCase<'a> {
@@ -532,5 +533,59 @@ mod tests {
             outcome.fix_hint.as_deref(),
             Some("Issue run was not queued for this repository.")
         );
+    }
+
+    #[test]
+    fn runtime_boundary_rejects_path_traversal_repository_segments() {
+        let cases = [
+            "../repo",
+            "owner/..",
+            "owner/repo/../../extra",
+            "owner/repo;rm",
+        ];
+
+        for input in cases {
+            assert_eq!(
+                normalize_repository_key(input),
+                None,
+                "expected guardrail rejection for unsafe repository input: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_boundary_guardrail_outcome_reports_rule_and_target_without_raw_values() {
+        let block = GuardrailBlock::new("workspace_boundary", "path");
+        let outcome = RuntimeQueueOutcome::blocked(&block);
+
+        assert_eq!(outcome.status, "blocked");
+        assert_eq!(
+            outcome.reason_code.as_deref(),
+            Some("runtime_guardrail_workspace_boundary_path")
+        );
+        assert_eq!(
+            outcome.fix_hint.as_deref(),
+            Some("Blocked path target because it violated workspace_boundary rule.")
+        );
+        assert!(outcome
+            .fix_hint
+            .as_deref()
+            .is_some_and(|hint| !hint.contains("/private/")));
+    }
+
+    #[test]
+    fn runtime_boundary_ensure_within_workspace_blocks_out_of_boundary_paths() {
+        let workspace = tempdir().expect("workspace tempdir");
+        let nested = workspace.path().join("repo");
+        std::fs::create_dir_all(&nested).expect("create nested path");
+        assert!(ensure_within_workspace(workspace.path(), &nested).is_ok());
+
+        let outside = tempdir().expect("outside tempdir");
+        let outside_target = outside.path().join("escape");
+        std::fs::create_dir_all(&outside_target).expect("create outside path");
+        let block = ensure_within_workspace(workspace.path(), &outside_target)
+            .expect_err("outside path should be blocked");
+        assert_eq!(block.rule(), "workspace_boundary");
+        assert_eq!(block.target_type(), "path");
     }
 }
