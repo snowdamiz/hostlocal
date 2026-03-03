@@ -18,6 +18,7 @@ import {
   type GithubUser,
   type RuntimeIssueRunHistoryItem,
   type RuntimeIssueRunSummary,
+  type RuntimeIssueRunSummaryValidationStatus,
   type RuntimeIssueRunTelemetry,
   type RuntimeRepositoryRunSnapshot,
   type RuntimeRepositoryRunSnapshotItem,
@@ -52,6 +53,14 @@ export type RuntimeSnapshotByIssueNumber = Record<number, RuntimeRepositoryRunSn
 export type RuntimeHistoryByIssueNumber = Record<number, RuntimeIssueRunHistoryItem[]>;
 export type RuntimeTelemetryByIssueNumber = Record<number, RuntimeRunTelemetryEventPayload[]>;
 export type RuntimeSummaryByIssueNumber = Record<number, RuntimeIssueRunSummary | null>;
+
+const RUNTIME_SUMMARY_VALIDATION_STATUSES: RuntimeIssueRunSummaryValidationStatus[] = [
+  "pass",
+  "fail",
+  "timeout",
+  "not-found",
+  "not-run",
+];
 
 interface LoadRepositoryItemsOptions {
   background?: boolean;
@@ -244,6 +253,46 @@ export function mergeRuntimeTelemetryPayloadByIssueNumber(
   return {
     ...current,
     [payload.issueNumber]: merged,
+  };
+}
+
+const isRuntimeSummaryValidationStatus = (
+  value: unknown,
+): value is RuntimeIssueRunSummaryValidationStatus =>
+  typeof value === "string" && RUNTIME_SUMMARY_VALIDATION_STATUSES.includes(value as RuntimeIssueRunSummaryValidationStatus);
+
+const resolveRuntimeSummaryValidationFallback = (
+  summary: RuntimeIssueRunSummary,
+): RuntimeIssueRunSummaryValidationStatus => {
+  const keyActions = Array.isArray(summary.keyActions) ? summary.keyActions : [];
+  const hasValidationSignal = keyActions.some((action) => {
+    const stage = action.stage.toLowerCase();
+    const kind = action.kind.toLowerCase();
+    const message = action.message.toLowerCase();
+    return stage.includes("validat") || kind.includes("validat") || message.includes("validation");
+  });
+  return hasValidationSignal ? "not-found" : "not-run";
+};
+
+export function normalizeRuntimeIssueRunSummary(summary: RuntimeIssueRunSummary): RuntimeIssueRunSummary {
+  const fallback = resolveRuntimeSummaryValidationFallback(summary);
+  const validationOutcomes = summary.validationOutcomes as
+    | Partial<Record<"code" | "browser", unknown>>
+    | undefined;
+
+  const code = isRuntimeSummaryValidationStatus(validationOutcomes?.code)
+    ? validationOutcomes.code
+    : fallback;
+  const browser = isRuntimeSummaryValidationStatus(validationOutcomes?.browser)
+    ? validationOutcomes.browser
+    : fallback;
+
+  return {
+    ...summary,
+    validationOutcomes: {
+      code,
+      browser,
+    },
   };
 }
 
@@ -663,9 +712,10 @@ export function useBoardInteractions(
       if (requestId !== runtimeSummaryRequestId) {
         return;
       }
+      const normalizedSummary = normalizeRuntimeIssueRunSummary(summary);
       setRuntimeSummaryByIssueNumber((current) => ({
         ...current,
-        [issueNumber]: summary,
+        [issueNumber]: normalizedSummary,
       }));
     } catch (error) {
       if (requestId !== runtimeSummaryRequestId) {
