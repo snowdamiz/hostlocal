@@ -18,6 +18,7 @@ describe("INTAKE_POLICY_REASON_MAP", () => {
       "runtime_guardrail_command_scope_command",
       "runtime_startup_failed",
       "runtime_workspace_prepare_failed",
+      "runtime_recovery_process_lost",
       "queued_run_not_found",
       "runtime_queue_removal_failed",
     ]);
@@ -51,6 +52,13 @@ describe("resolveIntakePolicyReason", () => {
     expect(resolved.reasonCode).toBe("queued_run_not_found");
     expect(resolved.violatedRule).toMatch(/queued|queue/i);
     expect(resolved.fixHint).toMatch(/queued|repository|retry/i);
+  });
+
+  it("resolves runtime recovery process-loss failures with reasonCode and fixHint semantics", () => {
+    const resolved = resolveIntakePolicyReason("runtime_recovery_process_lost");
+    expect(resolved.reasonCode).toBe("runtime_recovery_process_lost");
+    expect(resolved.violatedRule).toMatch(/recovery|restart|process/i);
+    expect(resolved.fixHint).toMatch(/retry|requeue|in progress|todo/i);
   });
 
   it("falls back to safe generic messaging for unknown reason codes", () => {
