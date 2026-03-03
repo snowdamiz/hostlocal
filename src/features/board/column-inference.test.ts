@@ -116,7 +116,7 @@ describe("inferDefaultColumn", () => {
         stage: "paused-runtime",
         terminalStatus: null,
         isPaused: true,
-      } as any),
+      }),
     ).toBe("inProgress");
   });
 
@@ -126,7 +126,7 @@ describe("inferDefaultColumn", () => {
         stage: "paused-runtime",
         terminalStatus: "failed",
         isPaused: true,
-      } as any),
+      }),
     ).toBe("todo");
   });
 });

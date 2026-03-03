@@ -12,6 +12,7 @@ export type RuntimeColumnTerminalStatus = "success" | "failed" | "cancelled" | "
 export interface RuntimeColumnInferenceMetadata {
   stage: string;
   terminalStatus: RuntimeColumnTerminalStatus | null;
+  isPaused?: boolean | null;
 }
 
 export const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
@@ -32,6 +33,10 @@ export const inferDefaultColumn = (
     runtimeMetadata?.terminalStatus === "guardrail_blocked"
   ) {
     return "todo";
+  }
+
+  if (runtimeMetadata?.isPaused) {
+    return "inProgress";
   }
 
   if (runtimeMetadata && ACTIVE_RUNTIME_STAGES.has(runtimeMetadata.stage)) {

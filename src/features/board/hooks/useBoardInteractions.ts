@@ -809,6 +809,7 @@ export function useBoardInteractions(
             ? {
                 stage: runtimeMetadata.stage,
                 terminalStatus: runtimeMetadata.terminalStatus,
+                isPaused: runtimeMetadata.isPaused,
               }
             : null,
         );

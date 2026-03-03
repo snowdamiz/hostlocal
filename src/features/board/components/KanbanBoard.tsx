@@ -238,6 +238,11 @@ export function KanbanBoard(props: KanbanBoardProps) {
                                                   queue position {runtime().queuePosition}
                                                 </span>
                                               </Show>
+                                              <Show when={runtime().isPaused && !runtime().terminalStatus}>
+                                                <span class="inline-flex items-center rounded-full border border-[var(--surface-light)] px-[7px] py-[2px] text-[10.5px] text-[var(--text-primary)]">
+                                                  paused
+                                                </span>
+                                              </Show>
                                               <Show when={runtime().terminalStatus}>
                                                 <span class="inline-flex items-center rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px]">
                                                   {runtime().terminalStatus}

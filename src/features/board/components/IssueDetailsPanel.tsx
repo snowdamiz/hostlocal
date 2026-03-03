@@ -173,6 +173,11 @@ export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
                                 queue position {runtime().queuePosition}
                               </span>
                             </Show>
+                            <Show when={runtime().isPaused && !runtime().terminalStatus}>
+                              <span class="inline-flex rounded-full border border-[var(--surface-light)] px-[8px] py-[3px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                paused
+                              </span>
+                            </Show>
                             <Show when={runtime().terminalStatus}>
                               <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[3px] text-[10.5px] font-semibold text-[var(--text-primary)]">
                                 {runtime().terminalStatus}
@@ -393,6 +398,11 @@ export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
                                 <Show when={run.stage === "queued" && run.queuePosition !== null}>
                                   <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] text-[var(--text-secondary)]">
                                     queue position {run.queuePosition}
+                                  </span>
+                                </Show>
+                                <Show when={run.isPaused && !run.terminalStatus}>
+                                  <span class="inline-flex rounded-full border border-[var(--surface-light)] px-[8px] py-[2px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                    paused
                                   </span>
                                 </Show>
                                 <Show when={run.terminalStatus}>
