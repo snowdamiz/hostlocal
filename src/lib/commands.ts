@@ -76,6 +76,80 @@ export interface RuntimeDequeueIssueRunOutcome {
   fixHint: string | null;
 }
 
+export type RuntimeRunStage = "queued" | "preparing" | "coding" | "validating" | "publishing";
+export type RuntimeTerminalStatus = "success" | "failed" | "cancelled" | "guardrail_blocked";
+
+export interface RuntimeRepositoryRunSnapshotItem {
+  runId: number;
+  issueNumber: number;
+  issueTitle: string;
+  issueBranchName: string;
+  stage: RuntimeRunStage;
+  queuePosition: number | null;
+  terminalStatus: RuntimeTerminalStatus | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+  updatedAt: string;
+  terminalAt: string | null;
+}
+
+export interface RuntimeRepositoryRunSnapshot {
+  repositoryFullName: string;
+  repositoryKey: string;
+  runs: RuntimeRepositoryRunSnapshotItem[];
+}
+
+export interface RuntimeRunTransitionHistoryItem {
+  sequence: number;
+  stage: RuntimeRunStage;
+  terminalStatus: RuntimeTerminalStatus | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+  createdAt: string;
+}
+
+export interface RuntimeIssueRunHistoryItem {
+  runId: number;
+  issueNumber: number;
+  issueTitle: string;
+  issueBranchName: string;
+  stage: RuntimeRunStage;
+  queuePosition: number | null;
+  terminalStatus: RuntimeTerminalStatus | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+  createdAt: string;
+  updatedAt: string;
+  terminalAt: string | null;
+  transitions: RuntimeRunTransitionHistoryItem[];
+}
+
+export interface RuntimeIssueRunHistory {
+  repositoryFullName: string;
+  repositoryKey: string;
+  issueNumber: number;
+  runs: RuntimeIssueRunHistoryItem[];
+}
+
+export interface RuntimeIssueRunHistoryRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+}
+
+export interface RuntimeRunStageChangedEventPayload {
+  runId: number;
+  repositoryFullName: string;
+  repositoryKey: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueBranchName: string;
+  stage: RuntimeRunStage;
+  queuePosition: number | null;
+  terminalStatus: RuntimeTerminalStatus | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+}
+
 export interface GithubAuthStatus {
   connected: boolean;
   user: GithubUser | null;
@@ -177,6 +251,16 @@ export function runtimeDequeueIssueRun(
   request: RuntimeDequeueIssueRunRequest,
 ): Promise<RuntimeDequeueIssueRunOutcome> {
   return invoke<RuntimeDequeueIssueRunOutcome>("runtime_dequeue_issue_run", { request });
+}
+
+export function runtimeGetRepositoryRunSnapshot(repositoryFullName: string): Promise<RuntimeRepositoryRunSnapshot> {
+  return invoke<RuntimeRepositoryRunSnapshot>("runtime_get_repository_run_snapshot", {
+    repositoryFullName,
+  });
+}
+
+export function runtimeGetIssueRunHistory(request: RuntimeIssueRunHistoryRequest): Promise<RuntimeIssueRunHistory> {
+  return invoke<RuntimeIssueRunHistory>("runtime_get_issue_run_history", { request });
 }
 
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {

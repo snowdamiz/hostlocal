@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import {
   githubAttemptIssueIntake,
   githubListRepositoryItems,
@@ -6,11 +7,17 @@ import {
   githubRevertIssueIntake,
   runtimeDequeueIssueRun,
   runtimeEnqueueIssueRun,
+  runtimeGetIssueRunHistory,
+  runtimeGetRepositoryRunSnapshot,
   type RuntimeDequeueIssueRunOutcome,
   type GithubIssueIntakeOutcome,
   type GithubRepository,
   type GithubRepositoryItem,
   type GithubUser,
+  type RuntimeIssueRunHistoryItem,
+  type RuntimeRepositoryRunSnapshot,
+  type RuntimeRepositoryRunSnapshotItem,
+  type RuntimeRunStageChangedEventPayload,
   type RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../../../intake/intake-state";
@@ -32,6 +39,10 @@ const DRAG_GHOST_CURSOR_OFFSET_X = 18;
 const DRAG_GHOST_CURSOR_OFFSET_Y = 16;
 const DRAG_GHOST_SNAPBACK_DURATION_MS = 240;
 const DEFAULT_AGENT_LABEL = "hostlocal";
+const RUNTIME_STAGE_CHANGED_EVENT_NAME = "runtime/run-stage-changed";
+
+export type RuntimeSnapshotByIssueNumber = Record<number, RuntimeRepositoryRunSnapshotItem>;
+export type RuntimeHistoryByIssueNumber = Record<number, RuntimeIssueRunHistoryItem[]>;
 
 interface LoadRepositoryItemsOptions {
   background?: boolean;
@@ -186,6 +197,68 @@ export async function revertIssueIntakeWithRuntimeDequeue(
   });
 }
 
+const normalizeRepositoryIdentifier = (value: string) => value.trim().toLowerCase();
+
+export function mapRuntimeSnapshotByIssueNumber(snapshot: RuntimeRepositoryRunSnapshot): RuntimeSnapshotByIssueNumber {
+  const mapped: RuntimeSnapshotByIssueNumber = {};
+  for (const run of snapshot.runs) {
+    mapped[run.issueNumber] = run;
+  }
+  return mapped;
+}
+
+export function mergeRuntimeStageChangedPayload(
+  current: RuntimeSnapshotByIssueNumber,
+  payload: RuntimeRunStageChangedEventPayload,
+): RuntimeSnapshotByIssueNumber {
+  const previous = current[payload.issueNumber];
+  return {
+    ...current,
+    [payload.issueNumber]: {
+      runId: payload.runId,
+      issueNumber: payload.issueNumber,
+      issueTitle: payload.issueTitle,
+      issueBranchName: payload.issueBranchName,
+      stage: payload.stage,
+      queuePosition: payload.queuePosition ?? null,
+      terminalStatus: payload.terminalStatus ?? null,
+      reasonCode: payload.reasonCode ?? null,
+      fixHint: payload.fixHint ?? null,
+      updatedAt: previous?.updatedAt ?? "",
+      terminalAt: payload.terminalStatus ? previous?.terminalAt ?? null : null,
+    },
+  };
+}
+
+export interface RuntimeStageChangedEventSubscriptionDependencies {
+  listen: typeof listen;
+}
+
+const runtimeStageChangedEventSubscriptionDependencies: RuntimeStageChangedEventSubscriptionDependencies = {
+  listen,
+};
+
+export async function subscribeRuntimeStageChangedEvents(
+  repositoryFullName: string,
+  onPayload: (payload: RuntimeRunStageChangedEventPayload) => void,
+  dependencies: RuntimeStageChangedEventSubscriptionDependencies = runtimeStageChangedEventSubscriptionDependencies,
+): Promise<() => void> {
+  const expectedRepository = normalizeRepositoryIdentifier(repositoryFullName);
+  const unlisten = await dependencies.listen<RuntimeRunStageChangedEventPayload>(
+    RUNTIME_STAGE_CHANGED_EVENT_NAME,
+    (event: TauriEvent<RuntimeRunStageChangedEventPayload>) => {
+      const payload = event.payload;
+      if (normalizeRepositoryIdentifier(payload.repositoryFullName) !== expectedRepository) {
+        return;
+      }
+      onPayload(payload);
+    },
+  );
+  return () => {
+    unlisten();
+  };
+}
+
 export function useBoardInteractions(
   githubUser: Accessor<GithubUser | null>,
   selectedRepository: Accessor<GithubRepository | null>,
@@ -202,10 +275,18 @@ export function useBoardInteractions(
   const [dragGhost, setDragGhost] = createSignal<DragGhostState | null>(null);
   const [isCardDragging, setIsCardDragging] = createSignal(false);
   const [selectedBoardItemId, setSelectedBoardItemId] = createSignal<number | null>(null);
+  const [runtimeSnapshotByIssueNumber, setRuntimeSnapshotByIssueNumber] = createSignal<RuntimeSnapshotByIssueNumber>({});
+  const [runtimeHistoryByIssueNumber, setRuntimeHistoryByIssueNumber] = createSignal<RuntimeHistoryByIssueNumber>({});
 
   let repositoryItemsRequestId = 0;
+  let runtimeSnapshotRequestId = 0;
+  let runtimeHistoryRequestId = 0;
+  let runtimeStageListenerRequestId = 0;
   let repositoryItemsLoadingCount = 0;
   let pointerDragState: PointerDragState | null = null;
+  let runtimeStageUnlisten: (() => void) | null = null;
+  let activeRepositoryKey: string | null = null;
+  let activeHistoryKey: string | null = null;
   const intakeAttemptState = createIntakeAttemptState();
 
   const selectedBoardItem = createMemo(() => {
@@ -217,11 +298,37 @@ export function useBoardInteractions(
     return repositoryItems().find((item) => item.id === itemId) ?? null;
   });
 
+  const selectedBoardRuntime = createMemo(() => {
+    const item = selectedBoardItem();
+    if (!item) {
+      return null;
+    }
+    return runtimeSnapshotByIssueNumber()[item.number] ?? null;
+  });
+
+  const selectedBoardRuntimeHistory = createMemo(() => {
+    const item = selectedBoardItem();
+    if (!item) {
+      return [];
+    }
+    return runtimeHistoryByIssueNumber()[item.number] ?? [];
+  });
+
   const clearRepositoryItemState = () => {
+    activeHistoryKey = null;
     repositoryItemsRequestId += 1;
+    runtimeSnapshotRequestId += 1;
+    runtimeHistoryRequestId += 1;
+    runtimeStageListenerRequestId += 1;
+    if (runtimeStageUnlisten) {
+      runtimeStageUnlisten();
+      runtimeStageUnlisten = null;
+    }
     repositoryItemsLoadingCount = 0;
     pointerDragState = null;
     setRepositoryItems([]);
+    setRuntimeSnapshotByIssueNumber({});
+    setRuntimeHistoryByIssueNumber({});
     setRepositoryItemsError(null);
     setIsRepositoryItemsLoading(false);
     setOptimisticColumnByItemId({});
@@ -347,6 +454,74 @@ export function useBoardInteractions(
         repositoryItemsLoadingCount = Math.max(0, repositoryItemsLoadingCount - 1);
         setIsRepositoryItemsLoading(repositoryItemsLoadingCount > 0);
       }
+    }
+  };
+
+  const hydrateRuntimeSnapshot = async (repositoryFullName: string) => {
+    const requestId = ++runtimeSnapshotRequestId;
+    try {
+      const snapshot = await runtimeGetRepositoryRunSnapshot(repositoryFullName);
+      if (requestId !== runtimeSnapshotRequestId) {
+        return;
+      }
+      setRuntimeSnapshotByIssueNumber(mapRuntimeSnapshotByIssueNumber(snapshot));
+    } catch (error) {
+      if (requestId !== runtimeSnapshotRequestId) {
+        return;
+      }
+      console.warn("[board] runtime snapshot hydration failed", error);
+      setRuntimeSnapshotByIssueNumber({});
+    }
+  };
+
+  const hydrateRuntimeHistoryForIssue = async (repositoryFullName: string, issueNumber: number) => {
+    const requestId = ++runtimeHistoryRequestId;
+    try {
+      const history = await runtimeGetIssueRunHistory({
+        repositoryFullName,
+        issueNumber,
+      });
+      if (requestId !== runtimeHistoryRequestId) {
+        return;
+      }
+      setRuntimeHistoryByIssueNumber((current) => ({
+        ...current,
+        [issueNumber]: history.runs,
+      }));
+    } catch (error) {
+      if (requestId !== runtimeHistoryRequestId) {
+        return;
+      }
+      console.warn("[board] runtime issue history hydration failed", error);
+      setRuntimeHistoryByIssueNumber((current) => ({
+        ...current,
+        [issueNumber]: [],
+      }));
+    }
+  };
+
+  const setupRuntimeStageListener = async (repositoryFullName: string) => {
+    const requestId = ++runtimeStageListenerRequestId;
+    if (runtimeStageUnlisten) {
+      runtimeStageUnlisten();
+      runtimeStageUnlisten = null;
+    }
+
+    try {
+      const unlisten = await subscribeRuntimeStageChangedEvents(repositoryFullName, (payload) => {
+        setRuntimeSnapshotByIssueNumber((current) => mergeRuntimeStageChangedPayload(current, payload));
+      });
+
+      if (requestId !== runtimeStageListenerRequestId) {
+        unlisten();
+        return;
+      }
+      runtimeStageUnlisten = unlisten;
+    } catch (error) {
+      if (requestId !== runtimeStageListenerRequestId) {
+        return;
+      }
+      console.warn("[board] runtime stage listener setup failed", error);
     }
   };
 
@@ -688,11 +863,36 @@ export function useBoardInteractions(
     const user = githubUser();
 
     if (!user || !repository) {
+      activeRepositoryKey = null;
       clearRepositoryItemState();
       return;
     }
 
+    const repositoryKey = normalizeRepositoryIdentifier(repository.fullName);
+    if (activeRepositoryKey === repositoryKey) {
+      return;
+    }
+    activeRepositoryKey = repositoryKey;
+    clearRepositoryItemState();
     void loadRepositoryItems(repository.fullName);
+    void hydrateRuntimeSnapshot(repository.fullName);
+    void setupRuntimeStageListener(repository.fullName);
+  });
+
+  createEffect(() => {
+    const repository = selectedRepository();
+    const item = selectedBoardItem();
+    if (!repository || !item) {
+      activeHistoryKey = null;
+      return;
+    }
+
+    const historyKey = `${normalizeRepositoryIdentifier(repository.fullName)}#${item.number}`;
+    if (activeHistoryKey === historyKey) {
+      return;
+    }
+    activeHistoryKey = historyKey;
+    void hydrateRuntimeHistoryForIssue(repository.fullName, item.number);
   });
 
   onMount(() => {
@@ -702,6 +902,10 @@ export function useBoardInteractions(
   });
 
   onCleanup(() => {
+    if (runtimeStageUnlisten) {
+      runtimeStageUnlisten();
+      runtimeStageUnlisten = null;
+    }
     pointerDragState = null;
     clearIntakeAttempts(intakeAttemptState);
     document.documentElement.classList.remove("is-card-dragging");
@@ -719,8 +923,12 @@ export function useBoardInteractions(
     dragOverColumn,
     dragGhost,
     isCardDragging,
+    runtimeSnapshotByIssueNumber,
+    runtimeHistoryByIssueNumber,
     selectedBoardItemId,
     selectedBoardItem,
+    selectedBoardRuntime,
+    selectedBoardRuntimeHistory,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,
