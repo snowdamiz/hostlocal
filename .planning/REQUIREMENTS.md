@@ -9,7 +9,7 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Styling Foundation
 
-- [ ] **STYLE-01**: User-facing v1 app surfaces use Tailwind v4 utilities and established design tokens instead of legacy global CSS-file styling.
+- [x] **STYLE-01**: User-facing v1 app surfaces use Tailwind v4 utilities and established design tokens instead of legacy global CSS-file styling.
 
 ### Issue Intake
 
@@ -86,7 +86,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STYLE-01 | Phase 1 | Pending |
+| STYLE-01 | Phase 1 | Complete |
 | INTK-01 | Phase 2 | Complete |
 | INTK-02 | Phase 2 | Complete |
 | RUN-01 | Phase 3 | Pending |
