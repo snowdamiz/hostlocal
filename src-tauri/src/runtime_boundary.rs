@@ -607,6 +607,34 @@ fn read_runtime_persisted_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<Runti
     })
 }
 
+fn read_runtime_persisted_transition(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<RuntimePersistedTransition> {
+    let stage_raw: String = row.get(3)?;
+    let stage = RuntimeRunStage::from_db(&stage_raw).ok_or_else(|| {
+        runtime_invariant_error(format!("invalid persisted transition stage: {stage_raw}"))
+    })?;
+    let terminal_status_raw: Option<String> = row.get(4)?;
+    let terminal_status = terminal_status_raw
+        .map(|value| {
+            RuntimeTerminalStatus::from_db(&value).ok_or_else(|| {
+                runtime_invariant_error(format!("invalid persisted transition terminal status: {value}"))
+            })
+        })
+        .transpose()?;
+
+    Ok(RuntimePersistedTransition {
+        transition_id: row.get(0)?,
+        run_id: row.get(1)?,
+        sequence: row.get(2)?,
+        stage,
+        terminal_status,
+        reason_code: row.get(5)?,
+        fix_hint: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
 fn load_runtime_run_by_id(conn: &Connection, run_id: i64) -> rusqlite::Result<RuntimePersistedRun> {
     conn.query_row(
         "SELECT
@@ -629,6 +657,57 @@ fn load_runtime_run_by_id(conn: &Connection, run_id: i64) -> rusqlite::Result<Ru
         params![run_id],
         read_runtime_persisted_run,
     )
+}
+
+fn load_runtime_run_transitions_newest_first(
+    conn: &Connection,
+    run_id: i64,
+) -> rusqlite::Result<Vec<RuntimePersistedTransition>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            transition_id,
+            run_id,
+            sequence,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at
+         FROM runtime_run_transitions
+         WHERE run_id = ?1
+         ORDER BY sequence DESC, transition_id DESC",
+    )?;
+    let rows = stmt.query_map(params![run_id], read_runtime_persisted_transition)?;
+    rows.collect()
+}
+
+fn prune_terminal_history_for_issue(
+    conn: &Connection,
+    repository_key: &str,
+    issue_number: i64,
+    keep_limit: i64,
+) -> rusqlite::Result<()> {
+    let mut stale_stmt = conn.prepare(
+        "SELECT run_id
+         FROM runtime_runs
+         WHERE repository_key = ?1
+           AND issue_number = ?2
+           AND terminal_status IS NOT NULL
+         ORDER BY terminal_at DESC, run_id DESC
+         LIMIT -1 OFFSET ?3",
+    )?;
+    let stale_rows = stale_stmt.query_map(
+        params![repository_key, issue_number, keep_limit],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let stale_run_ids: Vec<i64> = stale_rows.collect::<Result<Vec<_>, _>>()?;
+    drop(stale_stmt);
+
+    for stale_run_id in stale_run_ids {
+        conn.execute("DELETE FROM runtime_runs WHERE run_id = ?1", params![stale_run_id])?;
+    }
+
+    Ok(())
 }
 
 fn load_active_runtime_run_by_issue(
@@ -818,6 +897,10 @@ fn transition_run_stage(
         ],
     )
     .map_err(|e| e.to_string())?;
+    if terminal_status_value.is_some() {
+        prune_terminal_history_for_issue(&tx, &current.repository_key, current.issue_number, 20)
+            .map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
 
     load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())
@@ -1139,6 +1222,7 @@ pub fn runtime_enqueue_issue_run_inner(
     Ok(outcome)
 }
 
+#[cfg(test)]
 pub fn runtime_dequeue_issue_run_inner(
     state: &RuntimeBoundarySharedState,
     request: RuntimeDequeueIssueRunRequest,
@@ -1659,19 +1743,12 @@ mod tests {
         )
         .expect("coding -> validating");
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT stage
-                 FROM runtime_run_transitions
-                 WHERE run_id = ?1
-                 ORDER BY sequence DESC",
-            )
-            .expect("prepare transition select");
-        let stages: Vec<String> = stmt
-            .query_map([persisted.run_id], |row| row.get(0))
-            .expect("query transitions")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect transitions");
+        let transitions = load_runtime_run_transitions_newest_first(&conn, persisted.run_id)
+            .expect("load transitions newest-first");
+        let stages: Vec<String> = transitions
+            .into_iter()
+            .map(|transition| transition.stage.as_str().to_string())
+            .collect();
         assert_eq!(
             stages,
             vec![
