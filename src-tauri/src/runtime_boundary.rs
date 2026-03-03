@@ -1,13 +1,13 @@
 use crate::db::{with_connection, DbPath};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tempfile::TempDir;
 
@@ -1074,11 +1074,21 @@ fn persist_advance_runtime_run_to_publishing(
     })
 }
 
+struct RuntimeStartupReconcileOutcome {
+    recoverable_runs: Vec<RuntimeIssueRun>,
+    stage_change_payloads: Vec<RuntimeRunStageChangedEventPayload>,
+}
+
 fn reconcile_runtime_state_on_startup_inner(
     conn: &Connection,
-) -> Result<Vec<RuntimeIssueRun>, String> {
+) -> Result<RuntimeStartupReconcileOutcome, String> {
     let non_terminal_runs = load_non_terminal_runtime_runs_ordered(conn).map_err(|e| e.to_string())?;
+    let mut touched_repositories = BTreeMap::new();
     for persisted in &non_terminal_runs {
+        touched_repositories
+            .entry(persisted.repository_key.clone())
+            .or_insert_with(|| persisted.repository_full_name.clone());
+
         if persisted.stage == RuntimeRunStage::Queued {
             continue;
         }
@@ -1099,20 +1109,50 @@ fn reconcile_runtime_state_on_startup_inner(
         .into_iter()
         .map(persisted_run_to_runtime_issue_run)
         .collect();
-    Ok(recoverable_runs)
+    let mut stage_change_payloads = Vec::new();
+    for (repository_key, repository_full_name) in touched_repositories {
+        let snapshot =
+            runtime_get_repository_run_snapshot_inner(conn, &repository_key, &repository_full_name)?;
+        let snapshot_repository_full_name = snapshot.repository_full_name.clone();
+        let snapshot_repository_key = snapshot.repository_key.clone();
+        stage_change_payloads.extend(snapshot.runs.into_iter().map(|run| {
+            RuntimeRunStageChangedEventPayload {
+                run_id: run.run_id,
+                repository_full_name: snapshot_repository_full_name.clone(),
+                repository_key: snapshot_repository_key.clone(),
+                issue_number: run.issue_number,
+                issue_title: run.issue_title,
+                issue_branch_name: run.issue_branch_name,
+                stage: run.stage,
+                queue_position: run.queue_position,
+                terminal_status: run.terminal_status,
+                reason_code: run.reason_code,
+                fix_hint: run.fix_hint,
+            }
+        }));
+    }
+
+    Ok(RuntimeStartupReconcileOutcome {
+        recoverable_runs,
+        stage_change_payloads,
+    })
 }
 
 pub fn reconcile_runtime_state_on_startup(app: &AppHandle) -> Result<(), String> {
     let db_path = app.state::<DbPath>();
-    let recoverable_runs = with_connection(&db_path.0, |conn| {
+    let reconcile_outcome = with_connection(&db_path.0, |conn| {
         reconcile_runtime_state_on_startup_inner(conn).map_err(runtime_invariant_error)
     })?;
 
     let active_runs = {
         let state = app.state::<RuntimeBoundarySharedState>();
         let mut queue = state.lock()?;
-        queue.restore_queued_runs_and_collect_active(recoverable_runs)
+        queue.restore_queued_runs_and_collect_active(reconcile_outcome.recoverable_runs)
     };
+
+    for payload in &reconcile_outcome.stage_change_payloads {
+        emit_runtime_stage_changed_event(app, payload);
+    }
 
     for run in active_runs {
         if let Err(start_error) = start_run_worker(app, run.clone()) {
@@ -1221,22 +1261,64 @@ pub struct RuntimeRunStageChangedEventPayload {
 }
 
 fn runtime_stage_changed_event_payload_inner(
-    _conn: &Connection,
+    conn: &Connection,
     run_id: i64,
 ) -> Result<RuntimeRunStageChangedEventPayload, String> {
+    let run = load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())?;
+    let queue_position = if run.stage == RuntimeRunStage::Queued && run.terminal_status.is_none() {
+        let position: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM runtime_runs
+                 WHERE repository_key = ?1
+                   AND terminal_status IS NULL
+                   AND stage = ?2
+                   AND (queue_order < ?3 OR (queue_order = ?3 AND run_id <= ?4))",
+                params![
+                    run.repository_key.as_str(),
+                    RuntimeRunStage::Queued.as_str(),
+                    run.queue_order,
+                    run.run_id
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        usize::try_from(position).ok()
+    } else {
+        None
+    };
+
     Ok(RuntimeRunStageChangedEventPayload {
-        run_id,
-        repository_full_name: String::new(),
-        repository_key: String::new(),
-        issue_number: 0,
-        issue_title: String::new(),
-        issue_branch_name: String::new(),
-        stage: "queued".to_string(),
-        queue_position: None,
-        terminal_status: None,
-        reason_code: None,
-        fix_hint: None,
+        run_id: run.run_id,
+        repository_full_name: run.repository_full_name,
+        repository_key: run.repository_key,
+        issue_number: run.issue_number,
+        issue_title: run.issue_title,
+        issue_branch_name: run.issue_branch_name,
+        stage: run.stage.as_str().to_string(),
+        queue_position,
+        terminal_status: run.terminal_status.map(|status| status.as_str().to_string()),
+        reason_code: run.reason_code,
+        fix_hint: run.fix_hint,
     })
+}
+
+fn emit_runtime_stage_changed_event(
+    app: &AppHandle,
+    payload: &RuntimeRunStageChangedEventPayload,
+) {
+    let _ = app.emit(RUNTIME_RUN_STAGE_CHANGED_EVENT, payload);
+}
+
+fn emit_runtime_stage_changed_event_for_run(app: &AppHandle, run_id: i64) {
+    let db_path = app.state::<DbPath>();
+    let payload = with_connection(&db_path.0, |conn| {
+        runtime_stage_changed_event_payload_inner(conn, run_id).map_err(runtime_invariant_error)
+    });
+
+    if let Ok(payload) = payload {
+        emit_runtime_stage_changed_event(app, &payload);
+    }
 }
 
 fn runtime_get_repository_run_snapshot_inner(
@@ -1561,21 +1643,25 @@ fn finalize_run(
 ) {
     let db_path = app.state::<DbPath>();
     if terminal_status == RuntimeTerminalStatus::Success {
-        let _ = persist_advance_runtime_run_to_publishing(&db_path.0, &run);
+        if let Ok(publishing) = persist_advance_runtime_run_to_publishing(&db_path.0, &run) {
+            emit_runtime_stage_changed_event_for_run(app, publishing.run_id);
+        }
     }
-    if persist_finalize_runtime_run(
+    let finalized = if let Ok(finalized) = persist_finalize_runtime_run(
         &db_path.0,
         &run,
         terminal_status,
         reason_code.as_deref(),
         fix_hint.as_deref(),
-    )
-    .is_err()
-    {
+    ) {
+        finalized
+    } else {
         let _ = record_terminal_evidence(&run, terminal_status, reason_code);
         let _ = finalize_workspace_cleanup(workspace_root.as_deref());
         return;
-    }
+    };
+
+    emit_runtime_stage_changed_event_for_run(app, finalized.run_id);
 
     let _ = record_terminal_evidence(&run, terminal_status, reason_code);
     let _ = finalize_workspace_cleanup(workspace_root.as_deref());
@@ -1671,16 +1757,17 @@ fn spawn_sidecar_for_run(
 
 fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRunError> {
     let db_path = app.state::<DbPath>();
-    persist_transition_runtime_run_stage(
+    let preparing = persist_transition_runtime_run_stage(
         &db_path.0,
         &run,
         RuntimeRunStage::Queued,
         RuntimeRunStage::Preparing,
     )
     .map_err(|_| StartRunError::with_outcome(runtime_transition_failed_outcome(), None))?;
+    emit_runtime_stage_changed_event_for_run(app, preparing.run_id);
 
     let prepared = prepare_workspace_for_run(&run)?;
-    persist_transition_runtime_run_stage(
+    let coding = persist_transition_runtime_run_stage(
         &db_path.0,
         &run,
         RuntimeRunStage::Preparing,
@@ -1692,6 +1779,7 @@ fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRu
             Some(prepared.workspace_root.clone()),
         )
     })?;
+    emit_runtime_stage_changed_event_for_run(app, coding.run_id);
 
     spawn_sidecar_for_run(app, &run, &prepared)
 }
@@ -1764,18 +1852,21 @@ pub async fn runtime_enqueue_issue_run(
     let db_path = app.state::<DbPath>();
     let persisted = persist_insert_runtime_run(&db_path.0, &run)?;
     run.run_id = Some(persisted.run_id);
+    emit_runtime_stage_changed_event_for_run(&app, persisted.run_id);
 
     let outcome = {
         let mut queue = match state.lock() {
             Ok(queue) => queue,
             Err(error) => {
-                let _ = persist_finalize_runtime_run(
+                if let Ok(finalized) = persist_finalize_runtime_run(
                     &db_path.0,
                     &run,
                     RuntimeTerminalStatus::Failed,
                     Some("runtime_queue_state_unavailable"),
                     Some("Retry enqueue after restarting HostLocal."),
-                );
+                ) {
+                    emit_runtime_stage_changed_event_for_run(&app, finalized.run_id);
+                }
                 return Err(error);
             }
         };
@@ -1839,13 +1930,14 @@ pub async fn runtime_dequeue_issue_run(
     };
 
     let db_path = app.state::<DbPath>();
-    let _ = persist_finalize_runtime_run(
+    let finalized = persist_finalize_runtime_run(
         &db_path.0,
         &removed_run,
         RuntimeTerminalStatus::Cancelled,
         Some("runtime_queue_removed"),
         Some("Issue run was removed from queue before execution."),
     )?;
+    emit_runtime_stage_changed_event_for_run(&app, finalized.run_id);
 
     Ok(RuntimeQueueOutcome::removed())
 }
@@ -2336,8 +2428,9 @@ mod tests {
         let queued_run_id =
             runtime_insert_test_run(&conn, "owner/repo", "Owner/Repo", 4102, "Queued run", 1);
 
-        let restored_runs =
-            reconcile_runtime_state_on_startup_inner(&conn).expect("reconcile startup");
+        let restored_runs = reconcile_runtime_state_on_startup_inner(&conn)
+            .expect("reconcile startup")
+            .recoverable_runs;
         assert_eq!(
             restored_runs
                 .iter()
@@ -2387,8 +2480,9 @@ mod tests {
         runtime_insert_test_run(&conn, "beta/repo", "Beta/Repo", 4200, "Beta first", 0);
         runtime_insert_test_run(&conn, "alpha/repo", "Alpha/Repo", 4203, "Alpha second", 1);
 
-        let restored_runs =
-            reconcile_runtime_state_on_startup_inner(&conn).expect("reconcile startup");
+        let restored_runs = reconcile_runtime_state_on_startup_inner(&conn)
+            .expect("reconcile startup")
+            .recoverable_runs;
         let restored_identity: Vec<(String, i64)> = restored_runs
             .into_iter()
             .map(|run| (run.repository_key, run.issue_number))
