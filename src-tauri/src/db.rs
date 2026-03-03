@@ -62,12 +62,29 @@ pub fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
             FOREIGN KEY(run_id) REFERENCES runtime_runs(run_id) ON DELETE CASCADE,
             UNIQUE(run_id, sequence)
         );
+        CREATE TABLE IF NOT EXISTS runtime_run_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            sequence INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            message TEXT NOT NULL,
+            redaction_reasons TEXT NOT NULL DEFAULT '[]',
+            include_in_summary INTEGER NOT NULL DEFAULT 0 CHECK(include_in_summary IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(run_id) REFERENCES runtime_runs(run_id) ON DELETE CASCADE,
+            UNIQUE(run_id, sequence)
+        );
         CREATE INDEX IF NOT EXISTS idx_runtime_runs_repository_queue
             ON runtime_runs(repository_key, stage, queue_order, run_id);
         CREATE INDEX IF NOT EXISTS idx_runtime_runs_issue_terminal_history
             ON runtime_runs(repository_key, issue_number, terminal_status, terminal_at DESC, run_id DESC);
         CREATE INDEX IF NOT EXISTS idx_runtime_run_transitions_run_sequence
             ON runtime_run_transitions(run_id, sequence DESC, transition_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_runtime_run_events_run_sequence
+            ON runtime_run_events(run_id, sequence DESC, event_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_runtime_run_events_summary
+            ON runtime_run_events(run_id, include_in_summary, sequence DESC, event_id DESC);
         ",
     )
 }

@@ -733,6 +733,19 @@ struct RuntimePersistedTransition {
     created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimePersistedRunEvent {
+    event_id: i64,
+    run_id: i64,
+    sequence: i64,
+    kind: String,
+    stage: String,
+    message: String,
+    redaction_reasons: Vec<RuntimeTelemetryRedactionReason>,
+    include_in_summary: bool,
+    created_at: String,
+}
+
 fn runtime_invariant_error(message: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName(message.into())
 }
@@ -804,6 +817,30 @@ fn read_runtime_persisted_transition(
         reason_code: row.get(5)?,
         fix_hint: row.get(6)?,
         created_at: row.get(7)?,
+    })
+}
+
+fn read_runtime_persisted_run_event(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<RuntimePersistedRunEvent> {
+    let redaction_reasons_raw: String = row.get(6)?;
+    let redaction_reasons: Vec<RuntimeTelemetryRedactionReason> =
+        serde_json::from_str(&redaction_reasons_raw).map_err(|error| {
+            runtime_invariant_error(format!(
+                "invalid runtime run event redaction metadata: {error}"
+            ))
+        })?;
+
+    Ok(RuntimePersistedRunEvent {
+        event_id: row.get(0)?,
+        run_id: row.get(1)?,
+        sequence: row.get(2)?,
+        kind: row.get(3)?,
+        stage: row.get(4)?,
+        message: row.get(5)?,
+        redaction_reasons,
+        include_in_summary: row.get::<_, i64>(7)? != 0,
+        created_at: row.get(8)?,
     })
 }
 
@@ -906,6 +943,103 @@ fn load_runtime_run_transitions_newest_first(
     )?;
     let rows = stmt.query_map(params![run_id], read_runtime_persisted_transition)?;
     rows.collect()
+}
+
+fn load_runtime_run_event_by_id(
+    conn: &Connection,
+    event_id: i64,
+) -> rusqlite::Result<RuntimePersistedRunEvent> {
+    conn.query_row(
+        "SELECT
+            event_id,
+            run_id,
+            sequence,
+            kind,
+            stage,
+            message,
+            redaction_reasons,
+            include_in_summary,
+            created_at
+         FROM runtime_run_events
+         WHERE event_id = ?1",
+        params![event_id],
+        read_runtime_persisted_run_event,
+    )
+}
+
+fn load_runtime_run_events_newest_first(
+    conn: &Connection,
+    run_id: i64,
+) -> rusqlite::Result<Vec<RuntimePersistedRunEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            event_id,
+            run_id,
+            sequence,
+            kind,
+            stage,
+            message,
+            redaction_reasons,
+            include_in_summary,
+            created_at
+         FROM runtime_run_events
+         WHERE run_id = ?1
+         ORDER BY sequence DESC, event_id DESC",
+    )?;
+    let rows = stmt.query_map(params![run_id], read_runtime_persisted_run_event)?;
+    rows.collect()
+}
+
+fn next_runtime_run_event_sequence(conn: &Connection, run_id: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(sequence), 0) + 1
+         FROM runtime_run_events
+         WHERE run_id = ?1",
+        params![run_id],
+        |row| row.get(0),
+    )
+}
+
+fn insert_runtime_run_event(
+    conn: &Connection,
+    run_id: i64,
+    kind: &str,
+    stage: &str,
+    message: &str,
+    include_in_summary: bool,
+) -> Result<RuntimePersistedRunEvent, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    load_runtime_run_by_id(&tx, run_id)
+        .map_err(|e| format!("runtime run not found for telemetry event: {e}"))?;
+
+    let sequence = next_runtime_run_event_sequence(&tx, run_id).map_err(|e| e.to_string())?;
+    let redaction = redact_sensitive_text(message);
+    let redaction_reasons = serde_json::to_string(&redaction.reasons).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO runtime_run_events (
+            run_id,
+            sequence,
+            kind,
+            stage,
+            message,
+            redaction_reasons,
+            include_in_summary
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            run_id,
+            sequence,
+            kind,
+            stage,
+            redaction.masked_text,
+            redaction_reasons,
+            if include_in_summary { 1_i64 } else { 0_i64 }
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let event_id = tx.last_insert_rowid();
+    tx.commit().map_err(|e| e.to_string())?;
+
+    load_runtime_run_event_by_id(conn, event_id).map_err(|e| e.to_string())
 }
 
 fn prune_terminal_history_for_issue(
