@@ -2222,6 +2222,21 @@ mod tests {
             "index",
             "idx_runtime_run_transitions_run_sequence"
         ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "table",
+            "runtime_run_events"
+        ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "index",
+            "idx_runtime_run_events_run_sequence"
+        ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "index",
+            "idx_runtime_run_events_summary"
+        ));
     }
 
     #[test]
@@ -2479,6 +2494,50 @@ mod tests {
                 "queued".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn runtime_boundary_persists_runtime_events_with_monotonic_sequence_and_masked_messages() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4014, "Telemetry persistence");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+
+        let first = insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "queued",
+            "Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+            true,
+        )
+        .expect("insert first runtime event");
+        let second = insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "coding",
+            "coding milestone reached",
+            false,
+        )
+        .expect("insert second runtime event");
+
+        assert_eq!(first.sequence, 1);
+        assert_eq!(second.sequence, 2);
+        assert!(
+            first.message.contains("[REDACTED]"),
+            "persisted event message should keep inline redaction markers"
+        );
+        assert!(
+            !first
+                .message
+                .contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+            "raw secret values must never be stored in telemetry rows"
+        );
+
+        let events = load_runtime_run_events_newest_first(&conn, persisted.run_id)
+            .expect("load runtime run events newest-first");
+        let sequences: Vec<i64> = events.into_iter().map(|event| event.sequence).collect();
+        assert_eq!(sequences, vec![2, 1]);
     }
 
     #[test]
