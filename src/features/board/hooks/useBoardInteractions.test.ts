@@ -4,19 +4,23 @@ import type {
   GithubRepositoryItem,
   RuntimeIssueRunSummary,
   RuntimeIssueRunTelemetry,
+  RuntimeRepositoryRunSnapshotItem,
   RuntimeRepositoryRunSnapshot,
+  RuntimeRunControlOutcome,
   RuntimeRunTelemetryEventPayload,
   RuntimeRunStageChangedEventPayload,
   RuntimeDequeueIssueRunOutcome,
   RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
 import {
+  executeRuntimeControlAction,
   mapRuntimeSnapshotByIssueNumber,
   mapRuntimeTelemetryByIssueNumber,
   mergeRuntimeTelemetryPayloadByIssueNumber,
   mergeRuntimeStageChangedPayload,
   normalizeRuntimeIssueRunSummary,
   revertIssueIntakeWithRuntimeDequeue,
+  resolveRuntimeControlEligibility,
   startAgentRunForIssue,
   subscribeRuntimeTelemetryEvents,
   subscribeRuntimeStageChangedEvents,
@@ -74,6 +78,8 @@ const createRuntimeSnapshot = (): RuntimeRepositoryRunSnapshot => ({
       terminalStatus: null,
       reasonCode: null,
       fixHint: null,
+      isPaused: false,
+      pausedAt: null,
       updatedAt: "2026-03-03T05:00:00.000Z",
       terminalAt: null,
     },
@@ -87,6 +93,8 @@ const createRuntimeSnapshot = (): RuntimeRepositoryRunSnapshot => ({
       terminalStatus: null,
       reasonCode: null,
       fixHint: null,
+      isPaused: false,
+      pausedAt: null,
       updatedAt: "2026-03-03T05:01:00.000Z",
       terminalAt: null,
     },
@@ -105,6 +113,38 @@ const createRuntimeStagePayload = (
   stage: "queued",
   queuePosition: 2,
   terminalStatus: null,
+  reasonCode: null,
+  fixHint: null,
+  isPaused: false,
+  pausedAt: null,
+  ...overrides,
+});
+
+const createRuntimeControlTarget = (
+  overrides: Partial<RuntimeRepositoryRunSnapshotItem> = {},
+): RuntimeRepositoryRunSnapshotItem => ({
+  runId: 101,
+  issueNumber: 42,
+  issueTitle: "Runtime control issue",
+  issueBranchName: "hostlocal/issue-42",
+  stage: "coding",
+  queuePosition: null,
+  terminalStatus: null,
+  reasonCode: null,
+  fixHint: null,
+  isPaused: false,
+  pausedAt: null,
+  updatedAt: "2026-03-03T05:10:00.000Z",
+  terminalAt: null,
+  ...overrides,
+});
+
+const createRuntimeControlOutcome = (
+  overrides: Partial<RuntimeRunControlOutcome> = {},
+): RuntimeRunControlOutcome => ({
+  acknowledged: true,
+  runId: 101,
+  isPaused: false,
   reasonCode: null,
   fixHint: null,
   ...overrides,
@@ -568,5 +608,147 @@ describe("runtime summary normalization", () => {
       code: "not-found",
       browser: "not-found",
     });
+  });
+});
+
+describe("runtime control helpers", () => {
+  it("resolves state-aware control eligibility from selected runtime metadata", () => {
+    expect(resolveRuntimeControlEligibility(createRuntimeControlTarget())).toEqual({
+      canPauseRun: true,
+      canResumeRun: false,
+      canAbortRun: true,
+      canSteerRun: true,
+    });
+
+    expect(
+      resolveRuntimeControlEligibility(
+        createRuntimeControlTarget({
+          isPaused: true,
+          pausedAt: "2026-03-03T05:11:00.000Z",
+        }),
+      ),
+    ).toEqual({
+      canPauseRun: false,
+      canResumeRun: true,
+      canAbortRun: true,
+      canSteerRun: false,
+    });
+
+    expect(
+      resolveRuntimeControlEligibility(
+        createRuntimeControlTarget({
+          stage: "queued",
+          queuePosition: 2,
+        }),
+      ),
+    ).toEqual({
+      canPauseRun: false,
+      canResumeRun: false,
+      canAbortRun: false,
+      canSteerRun: false,
+    });
+
+    expect(
+      resolveRuntimeControlEligibility(
+        createRuntimeControlTarget({
+          terminalStatus: "cancelled",
+        }),
+      ),
+    ).toEqual({
+      canPauseRun: false,
+      canResumeRun: false,
+      canAbortRun: false,
+      canSteerRun: false,
+    });
+  });
+
+  it("returns null and skips command invocation when another control action is pending", async () => {
+    const runtimePauseIssueRun = vi.fn();
+    const runtimeResumeIssueRun = vi.fn();
+    const runtimeAbortIssueRun = vi.fn();
+    const runtimeSteerIssueRun = vi.fn();
+    const pushRuntimeControlToast = vi.fn();
+    const hydrateRuntimeSnapshot = vi.fn();
+    const hydrateRuntimeHistoryForIssue = vi.fn();
+    const hydrateRuntimeTelemetryForIssue = vi.fn();
+    const hydrateRuntimeSummaryForIssue = vi.fn();
+
+    const outcome = await executeRuntimeControlAction(
+      {
+        action: "steer",
+        repositoryFullName: "Owner/Repo",
+        issueNumber: 42,
+        runtime: createRuntimeControlTarget(),
+        pendingAction: "steer",
+        instruction: "Please keep the patch focused on sidebar rendering.",
+      },
+      {
+        runtimePauseIssueRun,
+        runtimeResumeIssueRun,
+        runtimeAbortIssueRun,
+        runtimeSteerIssueRun,
+        pushRuntimeControlToast,
+        hydrateRuntimeSnapshot,
+        hydrateRuntimeHistoryForIssue,
+        hydrateRuntimeTelemetryForIssue,
+        hydrateRuntimeSummaryForIssue,
+      },
+    );
+
+    expect(outcome).toBeNull();
+    expect(runtimeSteerIssueRun).not.toHaveBeenCalled();
+    expect(pushRuntimeControlToast).not.toHaveBeenCalled();
+  });
+
+  it("hydrates runtime state and emits accepted toast copy for acknowledged actions", async () => {
+    const runtimePauseIssueRun = vi
+      .fn()
+      .mockResolvedValue(createRuntimeControlOutcome({ acknowledged: true, runId: 101, isPaused: true }));
+    const runtimeResumeIssueRun = vi.fn();
+    const runtimeAbortIssueRun = vi.fn();
+    const runtimeSteerIssueRun = vi.fn();
+    const pushRuntimeControlToast = vi.fn();
+    const hydrateRuntimeSnapshot = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeHistoryForIssue = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeTelemetryForIssue = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeSummaryForIssue = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await executeRuntimeControlAction(
+      {
+        action: "pause",
+        repositoryFullName: "Owner/Repo",
+        issueNumber: 42,
+        runtime: createRuntimeControlTarget(),
+        pendingAction: null,
+      },
+      {
+        runtimePauseIssueRun,
+        runtimeResumeIssueRun,
+        runtimeAbortIssueRun,
+        runtimeSteerIssueRun,
+        pushRuntimeControlToast,
+        hydrateRuntimeSnapshot,
+        hydrateRuntimeHistoryForIssue,
+        hydrateRuntimeTelemetryForIssue,
+        hydrateRuntimeSummaryForIssue,
+      },
+    );
+
+    expect(outcome).toEqual(createRuntimeControlOutcome({ acknowledged: true, runId: 101, isPaused: true }));
+    expect(runtimePauseIssueRun).toHaveBeenCalledWith({
+      repositoryFullName: "Owner/Repo",
+      issueNumber: 42,
+    });
+    expect(hydrateRuntimeSnapshot).toHaveBeenCalledWith("Owner/Repo");
+    expect(hydrateRuntimeHistoryForIssue).toHaveBeenCalledWith("Owner/Repo", 42);
+    expect(hydrateRuntimeTelemetryForIssue).toHaveBeenCalledWith("Owner/Repo", 42, 101);
+    expect(hydrateRuntimeSummaryForIssue).toHaveBeenCalledWith("Owner/Repo", 42, 101);
+    expect(pushRuntimeControlToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "pause",
+        status: "accepted",
+        severity: "success",
+      }),
+    );
   });
 });
