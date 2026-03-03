@@ -5292,6 +5292,29 @@ https://example.com/callback?access_token=my-token-value";
     }
 
     #[test]
+    fn runtime_boundary_control_registry_preserves_workspace_root_for_abort_context() {
+        let mut state = RuntimeBoundaryState::default();
+        let run = build_run_with_id("owner/repo", 7105, "Abort workspace control run", 7105);
+        assert_eq!(state.enqueue_run(run.clone()), RuntimeQueueOutcome::started());
+
+        let workspace = tempdir().expect("workspace tempdir");
+        let workspace_root = workspace.path().join("run-workspace");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+
+        state.register_active_run_control_for_test_with_workspace(
+            run.run_id.expect("run id"),
+            workspace_root.clone(),
+        );
+
+        let resolved = state.active_run_workspace_root(run.run_id.expect("run id"));
+        assert_eq!(
+            resolved.as_deref(),
+            Some(workspace_root.as_path()),
+            "active control should retain workspace context for abort finalization"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_control_registry_ignores_duplicate_terminal_finalization_races() {
         let mut state = RuntimeBoundaryState::default();
         let run = build_run_with_id("owner/repo", 7102, "Race control run", 7102);
