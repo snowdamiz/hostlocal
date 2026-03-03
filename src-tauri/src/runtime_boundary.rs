@@ -15,6 +15,9 @@ const BRANCH_PREFIX: &str = "hostlocal";
 const SIDECAR_ALIAS: &str = "hostlocal-worker";
 const WORKSPACE_REPO_DIR: &str = "repo";
 const RUNTIME_EVIDENCE_DIR: &str = "hostlocal-runtime-evidence";
+const RUNTIME_RECOVERY_REASON_CODE: &str = "runtime_recovery_process_lost";
+const RUNTIME_RECOVERY_FIX_HINT: &str =
+    "A previous HostLocal session ended during execution. Requeue the issue to run again.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -983,6 +986,12 @@ fn persist_advance_runtime_run_to_publishing(
     })
 }
 
+fn reconcile_runtime_state_on_startup_inner(
+    _conn: &Connection,
+) -> Result<Vec<RuntimeIssueRun>, String> {
+    Ok(Vec::new())
+}
+
 fn runtime_transition_failed_outcome() -> RuntimeQueueOutcome {
     RuntimeQueueOutcome::startup_failed(
         "runtime_transition_persist_failed",
@@ -1811,6 +1820,105 @@ mod tests {
         assert_eq!(
             non_terminal_count, 1,
             "retention should not delete active/queued rows"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_reconcile_startup_finalizes_unrecoverable_inflight_runs() {
+        let conn = runtime_schema_test_connection();
+        let inflight_run_id =
+            runtime_insert_test_run(&conn, "owner/repo", "Owner/Repo", 4101, "Inflight run", 0);
+        transition_run_stage(
+            &conn,
+            inflight_run_id,
+            RuntimeRunStage::Queued,
+            Some(RuntimeRunStage::Preparing),
+            None,
+            None,
+            None,
+        )
+        .expect("queued -> preparing");
+        transition_run_stage(
+            &conn,
+            inflight_run_id,
+            RuntimeRunStage::Preparing,
+            Some(RuntimeRunStage::Coding),
+            None,
+            None,
+            None,
+        )
+        .expect("preparing -> coding");
+
+        let queued_run_id =
+            runtime_insert_test_run(&conn, "owner/repo", "Owner/Repo", 4102, "Queued run", 1);
+
+        let restored_runs =
+            reconcile_runtime_state_on_startup_inner(&conn).expect("reconcile startup");
+        assert_eq!(
+            restored_runs
+                .iter()
+                .map(|run| run.issue_number)
+                .collect::<Vec<_>>(),
+            vec![4102],
+            "only queued runs should remain recoverable after startup reconciliation"
+        );
+
+        let inflight_terminal: (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT terminal_status, reason_code, fix_hint
+                 FROM runtime_runs
+                 WHERE run_id = ?1",
+                [inflight_run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("load reconciled inflight run");
+        assert_eq!(inflight_terminal.0.as_deref(), Some("failed"));
+        assert_eq!(
+            inflight_terminal.1.as_deref(),
+            Some(RUNTIME_RECOVERY_REASON_CODE)
+        );
+        assert_eq!(
+            inflight_terminal.2.as_deref(),
+            Some(RUNTIME_RECOVERY_FIX_HINT)
+        );
+
+        let queued_terminal: Option<String> = conn
+            .query_row(
+                "SELECT terminal_status FROM runtime_runs WHERE run_id = ?1",
+                [queued_run_id],
+                |row| row.get(0),
+            )
+            .expect("queued run terminal status");
+        assert_eq!(
+            queued_terminal, None,
+            "queued runs should remain non-terminal after reconciliation"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_reconcile_startup_restores_queued_runs_in_fifo_order() {
+        let conn = runtime_schema_test_connection();
+        runtime_insert_test_run(&conn, "beta/repo", "Beta/Repo", 4202, "Beta second", 1);
+        runtime_insert_test_run(&conn, "alpha/repo", "Alpha/Repo", 4201, "Alpha first", 0);
+        runtime_insert_test_run(&conn, "beta/repo", "Beta/Repo", 4200, "Beta first", 0);
+        runtime_insert_test_run(&conn, "alpha/repo", "Alpha/Repo", 4203, "Alpha second", 1);
+
+        let restored_runs =
+            reconcile_runtime_state_on_startup_inner(&conn).expect("reconcile startup");
+        let restored_identity: Vec<(String, i64)> = restored_runs
+            .into_iter()
+            .map(|run| (run.repository_key, run.issue_number))
+            .collect();
+
+        assert_eq!(
+            restored_identity,
+            vec![
+                ("alpha/repo".to_string(), 4201),
+                ("alpha/repo".to_string(), 4203),
+                ("beta/repo".to_string(), 4200),
+                ("beta/repo".to_string(), 4202),
+            ],
+            "startup reconciliation should restore queued runs by repository and queue_order FIFO"
         );
     }
 
