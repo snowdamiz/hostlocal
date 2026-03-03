@@ -2,12 +2,10 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { siGithub } from "simple-icons";
 import {
   githubAttemptIssueIntake,
-  githubListRepositories,
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubRevertIssueIntake,
   type GithubIssueIntakeOutcome,
-  type GithubRepository,
   type GithubRepositoryItem,
 } from "../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../intake/intake-state";
@@ -15,6 +13,8 @@ import { pushIntakeRejectionToast } from "../intake/toast-store";
 import { AGENT_IN_PROGRESS_LABEL_PREFIX, inferDefaultColumn } from "../features/board/column-inference";
 import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../features/issue-content/issue-body";
 import { useGithubAuth } from "../features/auth/hooks/useGithubAuth";
+import { useRepositories } from "../features/repositories/hooks/useRepositories";
+import { RepositorySidebar } from "../features/repositories/components/RepositorySidebar";
 
 type KanbanColumnKey = "todo" | "inProgress" | "inReview" | "done";
 const CANVAS_DEFAULT_PAN_X = 0;
@@ -137,10 +137,14 @@ export function MainLayout() {
     signOutGithub,
     openVerificationPage,
   } = useGithubAuth();
-  const [repositories, setRepositories] = createSignal<GithubRepository[]>([]);
-  const [repositoryListError, setRepositoryListError] = createSignal<string | null>(null);
-  const [isRepositoryListLoading, setIsRepositoryListLoading] = createSignal(false);
-  const [selectedRepositoryId, setSelectedRepositoryId] = createSignal<number | null>(null);
+  const {
+    repositories,
+    repositoryListError,
+    isRepositoryListLoading,
+    selectedRepositoryId,
+    setSelectedRepositoryId,
+    selectedRepository,
+  } = useRepositories(githubUser);
   const [repositoryItems, setRepositoryItems] = createSignal<GithubRepositoryItem[]>([]);
   const [repositoryItemsError, setRepositoryItemsError] = createSignal<string | null>(null);
   const [isRepositoryItemsLoading, setIsRepositoryItemsLoading] = createSignal(false);
@@ -478,23 +482,6 @@ export function MainLayout() {
     setSelectedBoardItemId(null);
   };
 
-  const clearRepositoryState = () => {
-    setRepositories([]);
-    setSelectedRepositoryId(null);
-    setRepositoryListError(null);
-    setIsRepositoryListLoading(false);
-    clearRepositoryItemState();
-  };
-
-  const selectedRepository = () => {
-    const repositoryId = selectedRepositoryId();
-    if (repositoryId === null) {
-      return null;
-    }
-
-    return repositories().find((repository) => repository.id === repositoryId) ?? null;
-  };
-
   const groupedItemsByColumn = createMemo(() => {
     const grouped: Record<KanbanColumnKey, GithubRepositoryItem[]> = {
       todo: [],
@@ -609,28 +596,6 @@ export function MainLayout() {
         repositoryItemsLoadingCount = Math.max(0, repositoryItemsLoadingCount - 1);
         setIsRepositoryItemsLoading(repositoryItemsLoadingCount > 0);
       }
-    }
-  };
-
-  const loadRepositories = async () => {
-    setIsRepositoryListLoading(true);
-    setRepositoryListError(null);
-
-    try {
-      const allRepositories = await githubListRepositories();
-      setRepositories(allRepositories);
-      setSelectedRepositoryId((currentRepositoryId) => {
-        if (currentRepositoryId !== null && allRepositories.some((repository) => repository.id === currentRepositoryId)) {
-          return currentRepositoryId;
-        }
-
-        return allRepositories.length > 0 ? allRepositories[0].id : null;
-      });
-    } catch (error) {
-      clearRepositoryState();
-      setRepositoryListError(formatInvokeError(error, "Unable to load repositories."));
-    } finally {
-      setIsRepositoryListLoading(false);
     }
   };
 
@@ -973,17 +938,6 @@ export function MainLayout() {
   };
 
   createEffect(() => {
-    const user = githubUser();
-
-    if (!user) {
-      clearRepositoryState();
-      return;
-    }
-
-    void loadRepositories();
-  });
-
-  createEffect(() => {
     const repository = selectedRepository();
     const user = githubUser();
 
@@ -1031,52 +985,14 @@ export function MainLayout() {
   return (
     <div class={`layout${selectedBoardItem() ? " is-issue-panel-open" : ""}`}>
       <aside class="sidebar-left">
-        <div class="sidebar-repositories-panel">
-          <div class="sidebar-repositories">
-            <Show when={repositoryListError()}>
-              {(error) => (
-                <p class="sidebar-repositories-error" role="alert">
-                  {error()}
-                </p>
-              )}
-            </Show>
-            <Show when={githubUser()} fallback={<p class="sidebar-repositories-empty">Connect GitHub to see your repositories.</p>}>
-              <Show
-                when={!isRepositoryListLoading()}
-                fallback={<p class="sidebar-repositories-empty">Loading repositories...</p>}
-              >
-                <Show
-                  when={repositories().length > 0}
-                  fallback={<p class="sidebar-repositories-empty">No repositories found.</p>}
-                >
-                  <For each={repositories()}>
-                    {(repository) => (
-                      <button
-                        type="button"
-                        class={`sidebar-repository-item${selectedRepositoryId() === repository.id ? " is-selected" : ""}`}
-                        title={repository.fullName}
-                        onClick={() => setSelectedRepositoryId(repository.id)}
-                      >
-                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                          <path d="M5 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4v-5h6v5h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5Z" />
-                          <path d="M9 20v-5h6v5" />
-                        </svg>
-                        <p class="sidebar-repository-label">
-                          <span class="sidebar-repository-name">{repository.name}</span>
-                        </p>
-                        <span
-                          class={`sidebar-repository-visibility${repository.isPrivate ? " is-private" : ""}`}
-                        >
-                          {repository.isPrivate ? "Private" : "Public"}
-                        </span>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </Show>
-            </Show>
-          </div>
-        </div>
+        <RepositorySidebar
+          githubUser={githubUser}
+          repositories={repositories}
+          repositoryListError={repositoryListError}
+          isRepositoryListLoading={isRepositoryListLoading}
+          selectedRepositoryId={selectedRepositoryId}
+          onSelectRepository={(repositoryId) => setSelectedRepositoryId(repositoryId)}
+        />
 
         <div class="sidebar-footer">
           <Show when={authError()}>
