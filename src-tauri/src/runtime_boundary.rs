@@ -1659,6 +1659,25 @@ pub struct RuntimeIssueRunHistoryRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunTelemetry {
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub issue_number: i64,
+    pub run_id: i64,
+    pub events: Vec<RuntimeRunTelemetryEventPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunTelemetryRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+    pub run_id: Option<i64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeRunStageChangedEventPayload {
     pub run_id: i64,
     pub repository_full_name: String,
@@ -1998,6 +2017,104 @@ fn runtime_get_issue_run_history_inner(
     })
 }
 
+const DEFAULT_RUNTIME_ISSUE_TELEMETRY_LIMIT: usize = 100;
+const MAX_RUNTIME_ISSUE_TELEMETRY_LIMIT: usize = 250;
+
+fn resolve_runtime_issue_telemetry_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_RUNTIME_ISSUE_TELEMETRY_LIMIT)
+        .clamp(1, MAX_RUNTIME_ISSUE_TELEMETRY_LIMIT)
+}
+
+fn load_runtime_run_for_issue(
+    conn: &Connection,
+    repository_key: &str,
+    issue_number: i64,
+    run_id: Option<i64>,
+) -> Result<Option<RuntimePersistedRun>, String> {
+    if let Some(run_id) = run_id {
+        return conn
+            .query_row(
+                "SELECT
+                    run_id,
+                    repository_key,
+                    repository_full_name,
+                    issue_number,
+                    issue_title,
+                    issue_branch_name,
+                    queue_order,
+                    stage,
+                    terminal_status,
+                    reason_code,
+                    fix_hint,
+                    created_at,
+                    updated_at,
+                    terminal_at
+                 FROM runtime_runs
+                 WHERE run_id = ?1
+                   AND repository_key = ?2
+                   AND issue_number = ?3
+                 LIMIT 1",
+                params![run_id, repository_key, issue_number],
+                read_runtime_persisted_run,
+            )
+            .optional()
+            .map_err(|e| e.to_string());
+    }
+
+    conn.query_row(
+        "SELECT
+            run_id,
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at,
+            updated_at,
+            terminal_at
+         FROM runtime_runs
+         WHERE repository_key = ?1
+           AND issue_number = ?2
+         ORDER BY
+            (terminal_status IS NULL) DESC,
+            COALESCE(terminal_at, updated_at) DESC,
+            run_id DESC
+         LIMIT 1",
+        params![repository_key, issue_number],
+        read_runtime_persisted_run,
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+fn runtime_get_issue_run_telemetry_inner(
+    conn: &Connection,
+    repository_key: &str,
+    repository_full_name: &str,
+    issue_number: i64,
+    run_id: Option<i64>,
+    limit: Option<usize>,
+) -> Result<RuntimeIssueRunTelemetry, String> {
+    let target_run = load_runtime_run_for_issue(conn, repository_key, issue_number, run_id)?
+        .ok_or_else(|| "Runtime telemetry is unavailable for the selected issue.".to_string())?;
+    let mut events = runtime_run_telemetry_payloads_newest_first(conn, target_run.run_id)?;
+    events.truncate(resolve_runtime_issue_telemetry_limit(limit));
+
+    Ok(RuntimeIssueRunTelemetry {
+        repository_full_name: repository_full_name.to_string(),
+        repository_key: repository_key.to_string(),
+        issue_number,
+        run_id: target_run.run_id,
+        events,
+    })
+}
+
 pub fn runtime_get_repository_run_snapshot(
     db_path: &Path,
     repository_full_name: &str,
@@ -2031,6 +2148,31 @@ pub fn runtime_get_issue_run_history(
             &repository_key,
             repository_full_name,
             request.issue_number,
+        )
+        .map_err(runtime_invariant_error)
+    })
+}
+
+pub fn runtime_get_issue_run_telemetry(
+    db_path: &Path,
+    request: RuntimeIssueRunTelemetryRequest,
+) -> Result<RuntimeIssueRunTelemetry, String> {
+    let repository_full_name = request.repository_full_name.trim();
+    let repository_key = normalize_repository_key(repository_full_name).ok_or_else(|| {
+        "Select a valid repository issue before loading runtime telemetry.".to_string()
+    })?;
+    if request.issue_number <= 0 {
+        return Err("Select a valid repository issue before loading runtime telemetry.".to_string());
+    }
+
+    with_connection(db_path, |conn| {
+        runtime_get_issue_run_telemetry_inner(
+            conn,
+            &repository_key,
+            repository_full_name,
+            request.issue_number,
+            request.run_id,
+            request.limit,
         )
         .map_err(runtime_invariant_error)
     })

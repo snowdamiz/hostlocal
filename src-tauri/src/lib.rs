@@ -63,6 +63,7 @@ pub fn run() {
             runtime_boundary::runtime_dequeue_issue_run,
             commands::runtime_get_repository_run_snapshot,
             commands::runtime_get_issue_run_history,
+            commands::runtime_get_issue_run_telemetry,
             github_auth::github_auth_start,
             github_auth::github_auth_poll,
             github_auth::github_auth_logout,
