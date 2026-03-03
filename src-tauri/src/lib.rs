@@ -14,6 +14,7 @@ use window::{app_window_state_path, persist_window_state, restore_window_state};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let db_path = app_db_path(app.handle())?;
             with_connection(&db_path, |_| Ok(())).map_err(std::io::Error::other)?;

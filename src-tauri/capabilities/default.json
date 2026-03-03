@@ -8,6 +8,26 @@
     "core:window:allow-start-dragging",
     "core:window:allow-close",
     "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize"
+    "core:window:allow-toggle-maximize",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "hostlocal-worker",
+          "cmd": "hostlocal-worker",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "hostlocal-worker",
+          "cmd": "hostlocal-worker",
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }
