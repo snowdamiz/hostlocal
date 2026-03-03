@@ -53,6 +53,23 @@ export interface RuntimeDequeueIssueRunRequest {
   issueNumber: number;
 }
 
+export interface RuntimeControlIssueRunRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+}
+
+export interface RuntimeAbortIssueRunRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  reason?: string | null;
+}
+
+export interface RuntimeSteerIssueRunRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  instruction: string;
+}
+
 export type RuntimeEnqueueIssueRunStatus =
   | "started"
   | "queued"
@@ -76,6 +93,14 @@ export interface RuntimeDequeueIssueRunOutcome {
   fixHint: string | null;
 }
 
+export interface RuntimeRunControlOutcome {
+  acknowledged: boolean;
+  runId: number | null;
+  isPaused: boolean | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+}
+
 export type RuntimeRunStage = "queued" | "preparing" | "coding" | "validating" | "publishing";
 export type RuntimeTerminalStatus = "success" | "failed" | "cancelled" | "guardrail_blocked";
 
@@ -89,6 +114,8 @@ export interface RuntimeRepositoryRunSnapshotItem {
   terminalStatus: RuntimeTerminalStatus | null;
   reasonCode: string | null;
   fixHint: string | null;
+  isPaused: boolean;
+  pausedAt: string | null;
   updatedAt: string;
   terminalAt: string | null;
 }
@@ -118,6 +145,8 @@ export interface RuntimeIssueRunHistoryItem {
   terminalStatus: RuntimeTerminalStatus | null;
   reasonCode: string | null;
   fixHint: string | null;
+  isPaused: boolean;
+  pausedAt: string | null;
   createdAt: string;
   updatedAt: string;
   terminalAt: string | null;
@@ -227,6 +256,8 @@ export interface RuntimeRunStageChangedEventPayload {
   terminalStatus: RuntimeTerminalStatus | null;
   reasonCode: string | null;
   fixHint: string | null;
+  isPaused: boolean;
+  pausedAt: string | null;
 }
 
 export interface GithubAuthStatus {
@@ -330,6 +361,30 @@ export function runtimeDequeueIssueRun(
   request: RuntimeDequeueIssueRunRequest,
 ): Promise<RuntimeDequeueIssueRunOutcome> {
   return invoke<RuntimeDequeueIssueRunOutcome>("runtime_dequeue_issue_run", { request });
+}
+
+export function runtimePauseIssueRun(
+  request: RuntimeControlIssueRunRequest,
+): Promise<RuntimeRunControlOutcome> {
+  return invoke<RuntimeRunControlOutcome>("runtime_pause_issue_run", { request });
+}
+
+export function runtimeResumeIssueRun(
+  request: RuntimeControlIssueRunRequest,
+): Promise<RuntimeRunControlOutcome> {
+  return invoke<RuntimeRunControlOutcome>("runtime_resume_issue_run", { request });
+}
+
+export function runtimeAbortIssueRun(
+  request: RuntimeAbortIssueRunRequest,
+): Promise<RuntimeRunControlOutcome> {
+  return invoke<RuntimeRunControlOutcome>("runtime_abort_issue_run", { request });
+}
+
+export function runtimeSteerIssueRun(
+  request: RuntimeSteerIssueRunRequest,
+): Promise<RuntimeRunControlOutcome> {
+  return invoke<RuntimeRunControlOutcome>("runtime_steer_issue_run", { request });
 }
 
 export function runtimeGetRepositoryRunSnapshot(repositoryFullName: string): Promise<RuntimeRepositoryRunSnapshot> {
