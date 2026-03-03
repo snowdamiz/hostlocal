@@ -2,25 +2,19 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { siGithub } from "simple-icons";
 import {
   githubAttemptIssueIntake,
-  githubAuthLogout,
-  githubAuthPoll,
-  githubAuthStart,
-  githubAuthStatus,
   githubListRepositories,
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubRevertIssueIntake,
-  githubOpenVerificationUrl,
   type GithubIssueIntakeOutcome,
-  type GithubDeviceAuthStart,
   type GithubRepository,
   type GithubRepositoryItem,
-  type GithubUser,
 } from "../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../intake/intake-state";
 import { pushIntakeRejectionToast } from "../intake/toast-store";
 import { AGENT_IN_PROGRESS_LABEL_PREFIX, inferDefaultColumn } from "../features/board/column-inference";
 import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../features/issue-content/issue-body";
+import { useGithubAuth } from "../features/auth/hooks/useGithubAuth";
 
 type KanbanColumnKey = "todo" | "inProgress" | "inReview" | "done";
 const CANVAS_DEFAULT_PAN_X = 0;
@@ -128,14 +122,21 @@ const createDefaultVisibleCardCountByColumn = (): Record<KanbanColumnKey, number
 });
 
 export function MainLayout() {
-  const [githubUser, setGithubUser] = createSignal<GithubUser | null>(null);
-  const [authError, setAuthError] = createSignal<string | null>(null);
-  const [isAuthChecking, setIsAuthChecking] = createSignal(true);
-  const [isAuthStarting, setIsAuthStarting] = createSignal(false);
-  const [isPollingAuth, setIsPollingAuth] = createSignal(false);
-  const [isSigningOut, setIsSigningOut] = createSignal(false);
-  const [isCodeCopied, setIsCodeCopied] = createSignal(false);
-  const [deviceFlow, setDeviceFlow] = createSignal<GithubDeviceAuthStart | null>(null);
+  const {
+    githubUser,
+    authError,
+    isAuthChecking,
+    isAuthStarting,
+    isPollingAuth,
+    isSigningOut,
+    isCodeCopied,
+    deviceFlow,
+    refreshAuthState,
+    connectGithub,
+    copyUserCode,
+    signOutGithub,
+    openVerificationPage,
+  } = useGithubAuth();
   const [repositories, setRepositories] = createSignal<GithubRepository[]>([]);
   const [repositoryListError, setRepositoryListError] = createSignal<string | null>(null);
   const [isRepositoryListLoading, setIsRepositoryListLoading] = createSignal(false);
@@ -159,7 +160,6 @@ export function MainLayout() {
   const [isCanvasPanning, setIsCanvasPanning] = createSignal(false);
   const [selectedBoardItemId, setSelectedBoardItemId] = createSignal<number | null>(null);
 
-  let pollTimeoutId: number | null = null;
   let repositoryItemsRequestId = 0;
   let repositoryItemsLoadingCount = 0;
   let canvasResizeObserver: ResizeObserver | null = null;
@@ -204,13 +204,6 @@ export function MainLayout() {
     }
 
     return fallback;
-  };
-
-  const clearPollTimer = () => {
-    if (pollTimeoutId !== null) {
-      window.clearTimeout(pollTimeoutId);
-      pollTimeoutId = null;
-    }
   };
 
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -641,150 +634,6 @@ export function MainLayout() {
     }
   };
 
-  const refreshAuthState = async () => {
-    setIsAuthChecking(true);
-
-    try {
-      const status = await githubAuthStatus();
-      setGithubUser(status.user);
-      setAuthError(null);
-
-      if (status.user) {
-        await loadRepositories();
-      } else {
-        clearRepositoryState();
-      }
-    } catch {
-      setGithubUser(null);
-      clearRepositoryState();
-      setAuthError("Unable to load GitHub connection status.");
-    } finally {
-      setIsAuthChecking(false);
-    }
-  };
-
-  const scheduleAuthPoll = (delayMs: number) => {
-    clearPollTimer();
-    pollTimeoutId = window.setTimeout(() => {
-      void pollForGithubAuthorization(delayMs);
-    }, delayMs);
-  };
-
-  const pollForGithubAuthorization = async (delayMs: number) => {
-    if (!deviceFlow()) {
-      return;
-    }
-
-    setIsPollingAuth(true);
-
-    try {
-      const pollResponse = await githubAuthPoll();
-      if (pollResponse.status === "authorized") {
-        clearPollTimer();
-        setAuthError(null);
-        setDeviceFlow(null);
-        setIsCodeCopied(false);
-        await refreshAuthState();
-        return;
-      }
-
-      if (pollResponse.status === "pending") {
-        scheduleAuthPoll(delayMs);
-        return;
-      }
-
-      if (pollResponse.status === "slow_down") {
-        scheduleAuthPoll(delayMs + 5000);
-        return;
-      }
-
-      clearPollTimer();
-      setDeviceFlow(null);
-      setIsCodeCopied(false);
-      if (pollResponse.status === "denied") {
-        setAuthError("GitHub authorization was denied.");
-      } else if (pollResponse.status === "expired") {
-        setAuthError("GitHub authorization expired. Start again.");
-      } else {
-        setAuthError("GitHub authorization failed.");
-      }
-    } catch (error) {
-      clearPollTimer();
-      setDeviceFlow(null);
-      setIsCodeCopied(false);
-      setAuthError(formatInvokeError(error, "Unable to complete GitHub authorization."));
-    } finally {
-      setIsPollingAuth(false);
-    }
-  };
-
-  const connectGithub = async () => {
-    setAuthError(null);
-    setIsAuthStarting(true);
-    setIsCodeCopied(false);
-
-    try {
-      const flow = await githubAuthStart();
-      setDeviceFlow(flow);
-      scheduleAuthPoll(Math.max(1, flow.intervalSeconds) * 1000);
-      try {
-        await githubOpenVerificationUrl(flow.verificationUri);
-      } catch {
-        setAuthError("Could not open browser automatically. Use 'Open verification page'.");
-      }
-    } catch (error) {
-      setAuthError(formatInvokeError(error, "Unable to start GitHub authorization."));
-    } finally {
-      setIsAuthStarting(false);
-    }
-  };
-
-  const copyUserCode = async () => {
-    const flow = deviceFlow();
-    if (!flow) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(flow.userCode);
-      setIsCodeCopied(true);
-      window.setTimeout(() => setIsCodeCopied(false), 1500);
-    } catch {
-      setAuthError("Could not copy the GitHub code.");
-    }
-  };
-
-  const signOutGithub = async () => {
-    setIsSigningOut(true);
-    setAuthError(null);
-
-    try {
-      await githubAuthLogout();
-      clearPollTimer();
-      setDeviceFlow(null);
-      setGithubUser(null);
-      setIsCodeCopied(false);
-      clearRepositoryState();
-    } catch {
-      setAuthError("Unable to sign out from GitHub.");
-    } finally {
-      setIsSigningOut(false);
-    }
-  };
-
-  const openVerificationPage = async () => {
-    const flow = deviceFlow();
-    if (!flow) {
-      return;
-    }
-
-    try {
-      await githubOpenVerificationUrl(flow.verificationUri);
-    } catch {
-      setAuthError("Unable to open the verification page.");
-    }
-  };
-
   const openGithubItemPage = async (url: string) => {
     try {
       await githubOpenItemUrl(url);
@@ -1124,6 +973,17 @@ export function MainLayout() {
   };
 
   createEffect(() => {
+    const user = githubUser();
+
+    if (!user) {
+      clearRepositoryState();
+      return;
+    }
+
+    void loadRepositories();
+  });
+
+  createEffect(() => {
     const repository = selectedRepository();
     const user = githubUser();
 
@@ -1155,7 +1015,6 @@ export function MainLayout() {
   });
 
   onCleanup(() => {
-    clearPollTimer();
     stopCanvasResetAnimation();
     pointerDragState = null;
     clearIntakeAttempts(intakeAttemptState);
