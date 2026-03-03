@@ -2,10 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GithubIssueIntakeOutcome,
   GithubRepositoryItem,
+  RuntimeRepositoryRunSnapshot,
+  RuntimeRunStageChangedEventPayload,
   RuntimeDequeueIssueRunOutcome,
   RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
-import { revertIssueIntakeWithRuntimeDequeue, startAgentRunForIssue } from "./useBoardInteractions";
+import {
+  mapRuntimeSnapshotByIssueNumber,
+  mergeRuntimeStageChangedPayload,
+  revertIssueIntakeWithRuntimeDequeue,
+  startAgentRunForIssue,
+  subscribeRuntimeStageChangedEvents,
+} from "./useBoardInteractions";
 
 const createIssue = (overrides: Partial<GithubRepositoryItem> = {}): GithubRepositoryItem => ({
   id: 1,
@@ -43,6 +51,56 @@ const createDequeueOutcome = (
   queuePosition: null,
   reasonCode,
   fixHint,
+});
+
+const createRuntimeSnapshot = (): RuntimeRepositoryRunSnapshot => ({
+  repositoryFullName: "Owner/Repo",
+  repositoryKey: "owner/repo",
+  runs: [
+    {
+      runId: 100,
+      issueNumber: 41,
+      issueTitle: "Queued issue",
+      issueBranchName: "hostlocal/issue-41",
+      stage: "queued",
+      queuePosition: 1,
+      terminalStatus: null,
+      reasonCode: null,
+      fixHint: null,
+      updatedAt: "2026-03-03T05:00:00.000Z",
+      terminalAt: null,
+    },
+    {
+      runId: 101,
+      issueNumber: 42,
+      issueTitle: "Coding issue",
+      issueBranchName: "hostlocal/issue-42",
+      stage: "coding",
+      queuePosition: null,
+      terminalStatus: null,
+      reasonCode: null,
+      fixHint: null,
+      updatedAt: "2026-03-03T05:01:00.000Z",
+      terminalAt: null,
+    },
+  ],
+});
+
+const createRuntimeStagePayload = (
+  overrides: Partial<RuntimeRunStageChangedEventPayload> = {},
+): RuntimeRunStageChangedEventPayload => ({
+  runId: 100,
+  repositoryFullName: "Owner/Repo",
+  repositoryKey: "owner/repo",
+  issueNumber: 41,
+  issueTitle: "Queued issue",
+  issueBranchName: "hostlocal/issue-41",
+  stage: "queued",
+  queuePosition: 2,
+  terminalStatus: null,
+  reasonCode: null,
+  fixHint: null,
+  ...overrides,
 });
 
 describe("startAgentRunForIssue", () => {
@@ -209,5 +267,74 @@ describe("revertIssueIntakeWithRuntimeDequeue", () => {
       reasonCode: null,
       fixHint: null,
     });
+  });
+});
+
+describe("runtime metadata helpers", () => {
+  it("maps snapshot runs by issue number for deterministic lookup", () => {
+    const byIssueNumber = mapRuntimeSnapshotByIssueNumber(createRuntimeSnapshot());
+
+    expect(Object.keys(byIssueNumber)).toEqual(["41", "42"]);
+    expect(byIssueNumber[41]?.queuePosition).toBe(1);
+    expect(byIssueNumber[42]?.stage).toBe("coding");
+  });
+
+  it("merges stage-changed payloads onto existing runtime metadata", () => {
+    const current = mapRuntimeSnapshotByIssueNumber(createRuntimeSnapshot());
+    const merged = mergeRuntimeStageChangedPayload(
+      current,
+      createRuntimeStagePayload({
+        runId: 100,
+        issueNumber: 41,
+        stage: "publishing",
+        queuePosition: null,
+      }),
+    );
+
+    expect(merged[41]).toMatchObject({
+      runId: 100,
+      issueNumber: 41,
+      stage: "publishing",
+      queuePosition: null,
+      terminalStatus: null,
+    });
+    expect(merged[42]).toEqual(current[42]);
+  });
+
+  it("subscribes to runtime stage events and unlistens on cleanup", async () => {
+    const unlisten = vi.fn();
+    let handler: ((event: { payload: RuntimeRunStageChangedEventPayload }) => void) | null = null;
+    const listen = vi.fn().mockImplementation(async (_eventName, callback) => {
+      handler = callback;
+      return unlisten;
+    });
+    const onPayload = vi.fn();
+
+    const stop = await subscribeRuntimeStageChangedEvents("Owner/Repo", onPayload, { listen });
+    handler?.({
+      payload: createRuntimeStagePayload({
+        issueNumber: 41,
+        stage: "coding",
+      }),
+    });
+    handler?.({
+      payload: createRuntimeStagePayload({
+        repositoryFullName: "Else/Repo",
+        repositoryKey: "else/repo",
+        issueNumber: 99,
+      }),
+    });
+    stop();
+
+    expect(listen).toHaveBeenCalledWith("runtime/run-stage-changed", expect.any(Function));
+    expect(onPayload).toHaveBeenCalledTimes(1);
+    expect(onPayload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: "Owner/Repo",
+        issueNumber: 41,
+        stage: "coding",
+      }),
+    );
+    expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });
