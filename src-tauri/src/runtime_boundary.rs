@@ -745,6 +745,8 @@ pub async fn runtime_dequeue_issue_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::initialize_schema;
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     #[derive(Debug)]
@@ -768,6 +770,110 @@ mod tests {
             issue_title: title.to_string(),
         })
         .expect("valid runtime issue run")
+    }
+
+    fn runtime_schema_test_connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
+        initialize_schema(&conn).expect("initialize sqlite schema");
+        conn
+    }
+
+    fn sqlite_object_exists(conn: &Connection, object_type: &str, name: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2 LIMIT 1",
+            [object_type, name],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    #[test]
+    fn runtime_boundary_schema_creates_runtime_tables_and_indexes() {
+        let conn = runtime_schema_test_connection();
+
+        assert!(sqlite_object_exists(&conn, "table", "runtime_runs"));
+        assert!(sqlite_object_exists(
+            &conn,
+            "table",
+            "runtime_run_transitions"
+        ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "index",
+            "idx_runtime_runs_repository_queue"
+        ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "index",
+            "idx_runtime_runs_issue_terminal_history"
+        ));
+        assert!(sqlite_object_exists(
+            &conn,
+            "index",
+            "idx_runtime_run_transitions_run_sequence"
+        ));
+    }
+
+    #[test]
+    fn runtime_boundary_schema_allows_only_canonical_stage_values() {
+        let conn = runtime_schema_test_connection();
+        let result = conn.execute(
+            "INSERT INTO runtime_runs (
+                repository_key,
+                repository_full_name,
+                issue_number,
+                issue_title,
+                issue_branch_name,
+                queue_order,
+                stage
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "owner/repo",
+                "Owner/Repo",
+                123_i64,
+                "Invalid stage test",
+                "hostlocal/issue-123-invalid-stage-test",
+                1_i64,
+                "invalid_stage"
+            ],
+        );
+
+        assert!(
+            result.is_err(),
+            "invalid canonical stage values should be rejected"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_schema_allows_only_terminal_metadata_status_values() {
+        let conn = runtime_schema_test_connection();
+        let result = conn.execute(
+            "INSERT INTO runtime_runs (
+                repository_key,
+                repository_full_name,
+                issue_number,
+                issue_title,
+                issue_branch_name,
+                queue_order,
+                stage,
+                terminal_status
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "owner/repo",
+                "Owner/Repo",
+                124_i64,
+                "Invalid terminal test",
+                "hostlocal/issue-124-invalid-terminal-test",
+                2_i64,
+                "queued",
+                "unknown_terminal"
+            ],
+        );
+
+        assert!(
+            result.is_err(),
+            "invalid terminal metadata values should be rejected"
+        );
     }
 
     #[test]
