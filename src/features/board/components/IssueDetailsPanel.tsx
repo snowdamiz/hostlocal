@@ -16,6 +16,19 @@ interface IssueDetailsPanelProps {
   selectedBoardRuntimeHistory: Accessor<RuntimeIssueRunHistoryItem[]>;
   selectedBoardRuntimeTelemetry: Accessor<RuntimeRunTelemetryEventPayload[]>;
   selectedBoardRuntimeSummary: Accessor<RuntimeIssueRunSummary | null>;
+  selectedRuntimeControlAvailability: Accessor<{
+    canPauseRun: boolean;
+    canResumeRun: boolean;
+    canAbortRun: boolean;
+    canSteerRun: boolean;
+    pendingAction: "pause" | "resume" | "abort" | "steer" | null;
+    hasPendingAction: boolean;
+  }>;
+  runtimeControlPendingAction: Accessor<"pause" | "resume" | "abort" | "steer" | null>;
+  onPauseRun: () => Promise<unknown>;
+  onResumeRun: () => Promise<unknown>;
+  onAbortRun: (reason?: string | null) => Promise<unknown>;
+  onSteerRun: (instruction: string) => Promise<unknown>;
   onClose: () => void;
   onOpenGithubItemPage: (url: string) => Promise<void>;
 }

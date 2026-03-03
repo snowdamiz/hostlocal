@@ -48,6 +48,12 @@ export function MainLayout() {
     selectedBoardRuntimeHistory,
     selectedBoardRuntimeSummary,
     selectedBoardRuntimeTelemetry,
+    selectedRuntimeControlAvailability,
+    runtimeControlPendingAction,
+    onPauseRun,
+    onResumeRun,
+    onAbortRun,
+    onSteerRun,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,
@@ -139,6 +145,12 @@ export function MainLayout() {
         selectedBoardRuntimeHistory={selectedBoardRuntimeHistory}
         selectedBoardRuntimeTelemetry={selectedBoardRuntimeTelemetry}
         selectedBoardRuntimeSummary={selectedBoardRuntimeSummary}
+        selectedRuntimeControlAvailability={selectedRuntimeControlAvailability}
+        runtimeControlPendingAction={runtimeControlPendingAction}
+        onPauseRun={onPauseRun}
+        onResumeRun={onResumeRun}
+        onAbortRun={onAbortRun}
+        onSteerRun={onSteerRun}
         onClose={closeIssuePanel}
         onOpenGithubItemPage={openGithubItemPage}
       />
