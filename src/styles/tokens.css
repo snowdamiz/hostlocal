@@ -10,6 +10,7 @@ html {
   --surface: #25282E;
   --surface-light: #595F69;
   --surface-border: #32373F;
+  --surface-border-strong: #4e5561;
   --text-primary: #eef3ff;
   --text-secondary: #b6c2d8;
   --text-muted: #949aa5;
@@ -60,6 +61,8 @@ html {
   --window-control-macos-maximize-border: #26a639;
   --window-control-non-macos-close-bg: #c42b1c;
   --window-control-non-macos-close-text: #ffffff;
+  --repository-private-border: #7f5a2a;
+  --repository-private-text: #dfc08f;
 }
 
 
