@@ -1577,6 +1577,167 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_terminal_metadata_persists_on_canonical_and_transition_rows() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4011, "Terminal metadata");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+
+        let finalized = transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            None,
+            Some(RuntimeTerminalStatus::Failed),
+            Some("runtime_test_failed"),
+            Some("Review runtime logs and retry."),
+        )
+        .expect("finalize runtime run");
+
+        assert_eq!(finalized.terminal_status, Some(RuntimeTerminalStatus::Failed));
+        assert_eq!(
+            finalized.reason_code.as_deref(),
+            Some("runtime_test_failed")
+        );
+        assert_eq!(
+            finalized.fix_hint.as_deref(),
+            Some("Review runtime logs and retry.")
+        );
+
+        let transition: (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT terminal_status, reason_code, fix_hint
+                 FROM runtime_run_transitions
+                 WHERE run_id = ?1
+                 ORDER BY sequence DESC
+                 LIMIT 1",
+                [persisted.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("latest transition");
+        assert_eq!(transition.0, "failed");
+        assert_eq!(transition.1.as_deref(), Some("runtime_test_failed"));
+        assert_eq!(
+            transition.2.as_deref(),
+            Some("Review runtime logs and retry.")
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_transition_history_can_be_read_newest_first() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4012, "Transition order");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            Some(RuntimeRunStage::Preparing),
+            None,
+            None,
+            None,
+        )
+        .expect("queued -> preparing");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Preparing,
+            Some(RuntimeRunStage::Coding),
+            None,
+            None,
+            None,
+        )
+        .expect("preparing -> coding");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Coding,
+            Some(RuntimeRunStage::Validating),
+            None,
+            None,
+            None,
+        )
+        .expect("coding -> validating");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT stage
+                 FROM runtime_run_transitions
+                 WHERE run_id = ?1
+                 ORDER BY sequence DESC",
+            )
+            .expect("prepare transition select");
+        let stages: Vec<String> = stmt
+            .query_map([persisted.run_id], |row| row.get(0))
+            .expect("query transitions")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect transitions");
+        assert_eq!(
+            stages,
+            vec![
+                "validating".to_string(),
+                "coding".to_string(),
+                "preparing".to_string(),
+                "queued".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_terminal_history_retains_newest_twenty_per_issue() {
+        let conn = runtime_schema_test_connection();
+        let active_run = build_run("owner/repo", 4013, "Still active");
+        let _ = insert_runtime_run(&conn, &active_run).expect("persist active run");
+
+        for index in 0..25_i64 {
+            let run = build_run("owner/repo", 4013, &format!("Terminal run {index}"));
+            let persisted = insert_runtime_run(&conn, &run).expect("persist terminal run");
+            let reason_code = format!("runtime_failure_{index:02}");
+            let fix_hint = format!("Fix hint {index:02}");
+            transition_run_stage(
+                &conn,
+                persisted.run_id,
+                RuntimeRunStage::Queued,
+                None,
+                Some(RuntimeTerminalStatus::Failed),
+                Some(reason_code.as_str()),
+                Some(fix_hint.as_str()),
+            )
+            .expect("finalize run");
+        }
+
+        let terminal_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs
+                 WHERE repository_key = ?1
+                   AND issue_number = ?2
+                   AND terminal_status IS NOT NULL",
+                rusqlite::params!["owner/repo", 4013_i64],
+                |row| row.get(0),
+            )
+            .expect("count terminal runs");
+        let non_terminal_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs
+                 WHERE repository_key = ?1
+                   AND issue_number = ?2
+                   AND terminal_status IS NULL",
+                rusqlite::params!["owner/repo", 4013_i64],
+                |row| row.get(0),
+            )
+            .expect("count non-terminal runs");
+
+        assert_eq!(
+            terminal_count, 20,
+            "retention should keep only the latest 20 terminal runs"
+        );
+        assert_eq!(
+            non_terminal_count, 1,
+            "retention should not delete active/queued rows"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_normalizes_repository_keys_table() {
         let cases = [
             NormalizeRepositoryCase {
