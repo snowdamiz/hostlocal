@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-03T05:38:38.000Z"
+status: in_progress
+last_updated: "2026-03-03T06:24:28.141Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 15
+  completed_plans: 13
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 ## Current Position
 
 Phase: 04 of 10 (Deterministic Run State Engine)
-Plan: 0 of TBD in current phase
-Status: Ready to Plan
-Last activity: 2026-03-03 — Completed plan 03-03 (3/3) with verification passed.
+Plan: 1 of 3 in current phase
+Status: In Progress
+Last activity: 2026-03-03 — Completed plan 04-01 (3/3) with verification passed.
 
-Progress: [████████░░] 75%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [████████░░] 75%
 | Phase 03-local-worker-runtime-boundary P01 | 4m | 3 tasks | 2 files |
 | Phase 03-local-worker-runtime-boundary P02 | 7m | 3 tasks | 7 files |
 | Phase 03-local-worker-runtime-boundary P03 | 6m | 3 tasks | 5 files |
+| Phase 04-deterministic-run-state-engine P01 | 11m | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,8 @@ Recent decisions affecting current work:
 - [Phase 03-local-worker-runtime-boundary]: Persist only lightweight terminal evidence outside ephemeral workspaces and finalize cleanup/queue handoff through one shared path.
 - [Phase 03-local-worker-runtime-boundary]: Treat runtime enqueue outcomes as authoritative: only started/queued keep In Progress; all other statuses trigger rejection plus revert.
 - [Phase 03-local-worker-runtime-boundary]: Require successful runtime dequeue before inProgress-to-todo label reversion to prevent silent queue drift.
+- [Phase 04-deterministic-run-state-engine]: Use runtime_runs as canonical run truth and runtime_run_transitions as append-only lifecycle history.
+- [Phase 04-deterministic-run-state-engine]: Require expected-stage checks on every transition write and persist terminal metadata on both canonical and timeline rows.
 
 ### Roadmap Evolution
 
@@ -107,6 +110,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 00:38
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-deterministic-run-state-engine/04-CONTEXT.md
+Last session: 2026-03-03 01:24
+Stopped at: Completed 04-deterministic-run-state-engine-01-PLAN.md
+Resume file: .planning/phases/04-deterministic-run-state-engine/04-02-PLAN.md
