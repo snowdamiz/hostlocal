@@ -10,6 +10,7 @@ export type IntakePolicyReasonCode =
   | "runtime_guardrail_command_scope_command"
   | "runtime_startup_failed"
   | "runtime_workspace_prepare_failed"
+  | "runtime_recovery_process_lost"
   | "queued_run_not_found"
   | "runtime_queue_removal_failed";
 
@@ -74,6 +75,10 @@ export const INTAKE_POLICY_REASON_MAP: Readonly<Record<IntakePolicyReasonCode, I
   runtime_workspace_prepare_failed: {
     violatedRule: "Runtime workspace preparation failed before local worker execution.",
     fixHint: "Retry after repository clone and branch setup are available locally.",
+  },
+  runtime_recovery_process_lost: {
+    violatedRule: "Runtime recovery could not reconnect an in-flight process after restart.",
+    fixHint: "Move the issue back to In Progress to requeue a fresh local run.",
   },
   queued_run_not_found: {
     violatedRule: "Issue run was not queued, so runtime queue removal could not proceed.",

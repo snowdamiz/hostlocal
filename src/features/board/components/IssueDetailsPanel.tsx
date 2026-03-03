@@ -1,13 +1,36 @@
 import { For, Show, type Accessor } from "solid-js";
 import { siGithub } from "simple-icons";
-import type { GithubRepositoryItem } from "../../../lib/commands";
+import type {
+  GithubRepositoryItem,
+  RuntimeIssueRunHistoryItem,
+  RuntimeRepositoryRunSnapshotItem,
+} from "../../../lib/commands";
+import { resolveIntakePolicyReason } from "../../../intake/policy-reasons";
 import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../../issue-content/issue-body";
 
 interface IssueDetailsPanelProps {
   selectedBoardItem: Accessor<GithubRepositoryItem | null>;
+  selectedBoardRuntime: Accessor<RuntimeRepositoryRunSnapshotItem | null>;
+  selectedBoardRuntimeHistory: Accessor<RuntimeIssueRunHistoryItem[]>;
   onClose: () => void;
   onOpenGithubItemPage: (url: string) => Promise<void>;
 }
+
+const formatRuntimeTimestamp = (value: string | null | undefined) => {
+  if (!value) {
+    return "recently";
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return new Date(parsed).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
 
 export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
   return (
@@ -54,6 +77,96 @@ export function IssueDetailsPanel(props: IssueDetailsPanelProps) {
               </header>
 
               <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+                <section class="flex flex-col gap-1.5 border-b border-[var(--surface-border)] pb-[10px]">
+                  <p class="m-0 text-[10.5px] font-bold uppercase tracking-[0.05em] text-[var(--text-secondary)]">Current Runtime Stage</p>
+                  <Show
+                    when={props.selectedBoardRuntime()}
+                    fallback={<p class="m-0 text-[11.5px] leading-[1.35] text-[var(--text-muted)]">No runtime metadata yet.</p>}
+                  >
+                    {(runtime) => {
+                      const resolvedReason = () =>
+                        runtime().terminalStatus
+                          ? resolveIntakePolicyReason(runtime().reasonCode, runtime().fixHint)
+                          : null;
+                      return (
+                        <div class="flex flex-col gap-2">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[3px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                              {runtime().stage}
+                            </span>
+                            <Show when={runtime().stage === "queued" && runtime().queuePosition !== null}>
+                              <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[3px] text-[10.5px] font-semibold text-[var(--text-secondary)]">
+                                queue position {runtime().queuePosition}
+                              </span>
+                            </Show>
+                            <Show when={runtime().terminalStatus}>
+                              <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[3px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                {runtime().terminalStatus}
+                              </span>
+                            </Show>
+                          </div>
+                          <Show when={resolvedReason()}>
+                            {(reason) => (
+                              <div class="flex flex-col gap-1 rounded-[8px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-2 text-[11px] leading-[1.35] text-[var(--text-secondary)]">
+                                <span class="font-semibold text-[var(--text-primary)]">{reason().reasonCode}</span>
+                                <span>{reason().violatedRule}</span>
+                                <span>{reason().fixHint}</span>
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                      );
+                    }}
+                  </Show>
+                </section>
+
+                <section class="flex flex-col gap-1.5 border-b border-[var(--surface-border)] pb-[10px]">
+                  <p class="m-0 text-[10.5px] font-bold uppercase tracking-[0.05em] text-[var(--text-secondary)]">Runtime history</p>
+                  <Show
+                    when={props.selectedBoardRuntimeHistory().length > 0}
+                    fallback={<p class="m-0 text-[11.5px] leading-[1.35] text-[var(--text-muted)]">No runtime history available.</p>}
+                  >
+                    <ol class="m-0 flex list-none flex-col gap-2 p-0">
+                      <For each={props.selectedBoardRuntimeHistory()}>
+                        {(run) => {
+                          const resolvedReason = () =>
+                            run.terminalStatus ? resolveIntakePolicyReason(run.reasonCode, run.fixHint) : null;
+                          return (
+                            <li class="rounded-[8px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-2">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                  {run.stage}
+                                </span>
+                                <Show when={run.stage === "queued" && run.queuePosition !== null}>
+                                  <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] text-[var(--text-secondary)]">
+                                    queue position {run.queuePosition}
+                                  </span>
+                                </Show>
+                                <Show when={run.terminalStatus}>
+                                  <span class="inline-flex rounded-full border border-[var(--surface-border)] px-[8px] py-[2px] text-[10.5px] font-semibold text-[var(--text-primary)]">
+                                    {run.terminalStatus}
+                                  </span>
+                                </Show>
+                              </div>
+                              <p class="m-0 mt-1 text-[10.5px] text-[var(--text-muted)]">
+                                {formatRuntimeTimestamp(run.terminalAt ?? run.updatedAt)}
+                              </p>
+                              <Show when={resolvedReason()}>
+                                {(reason) => (
+                                  <div class="mt-1 text-[11px] leading-[1.35] text-[var(--text-secondary)]">
+                                    <p class="m-0 font-semibold text-[var(--text-primary)]">{reason().reasonCode}</p>
+                                    <p class="m-0">{reason().fixHint}</p>
+                                  </div>
+                                )}
+                              </Show>
+                            </li>
+                          );
+                        }}
+                      </For>
+                    </ol>
+                  </Show>
+                </section>
+
                 <section class="flex flex-col gap-1.5 border-b border-[var(--surface-border)] pb-[10px]">
                   <p class="m-0 text-[10.5px] font-bold uppercase tracking-[0.05em] text-[var(--text-secondary)]">Issue Text</p>
                   <Show

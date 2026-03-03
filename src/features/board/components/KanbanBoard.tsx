@@ -1,5 +1,5 @@
 import { For, Show, type Accessor, type JSX } from "solid-js";
-import type { GithubRepositoryItem } from "../../../lib/commands";
+import type { GithubRepositoryItem, RuntimeRepositoryRunSnapshotItem } from "../../../lib/commands";
 import { KANBAN_COLUMNS, type DragGhostState, type KanbanColumnKey, type VisibleCardCountByColumn } from "../types";
 
 interface KanbanBoardProps {
@@ -22,6 +22,7 @@ interface KanbanBoardProps {
   visibleCardCountByColumn: Accessor<VisibleCardCountByColumn>;
   dragOverColumn: Accessor<KanbanColumnKey | null>;
   draggingItemId: Accessor<number | null>;
+  runtimeSnapshotByIssueNumber: Accessor<Record<number, RuntimeRepositoryRunSnapshotItem>>;
   selectedBoardItemId: Accessor<number | null>;
   dragGhost: Accessor<DragGhostState | null>;
   onCardPointerDown: (event: PointerEvent, item: GithubRepositoryItem) => void;
@@ -173,58 +174,81 @@ export function KanbanBoard(props: KanbanBoardProps) {
                                 }
                               >
                                 <For each={visibleColumnItems()}>
-                                  {(item) => (
-                                    <article
-                                      class="kanban-card m-0 flex cursor-grab flex-col gap-2 rounded-[10px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-[10px] text-[var(--text-primary)] transition-[transform,box-shadow,border-color,background-color,opacity] duration-170 hover:border-[var(--surface-light)] hover:shadow-[0_6px_16px_var(--app-grid-line)] active:cursor-grabbing"
-                                      classList={{
-                                        "border-[var(--surface-light)]":
-                                          props.draggingItemId() === item.id || props.selectedBoardItemId() === item.id,
-                                        "opacity-[0.05]": props.draggingItemId() === item.id,
-                                        "translate-x-[10px]": props.draggingItemId() === item.id,
-                                        "translate-y-[-16px]": props.draggingItemId() === item.id,
-                                        "scale-[0.94]": props.draggingItemId() === item.id,
-                                      }}
-                                      onPointerDown={(event) => props.onCardPointerDown(event, item)}
-                                      onClick={() => props.onSelectBoardItem(item.id)}
-                                    >
-                                      <div class="flex items-center justify-between gap-2">
-                                        <div class="flex items-center gap-2">
+                                  {(item) => {
+                                    const runtimeRun = () => props.runtimeSnapshotByIssueNumber()[item.number] ?? null;
+                                    return (
+                                      <article
+                                        class="kanban-card m-0 flex cursor-grab flex-col gap-2 rounded-[10px] border border-[var(--surface-border)] bg-[var(--surface-dark)] p-[10px] text-[var(--text-primary)] transition-[transform,box-shadow,border-color,background-color,opacity] duration-170 hover:border-[var(--surface-light)] hover:shadow-[0_6px_16px_var(--app-grid-line)] active:cursor-grabbing"
+                                        classList={{
+                                          "border-[var(--surface-light)]":
+                                            props.draggingItemId() === item.id || props.selectedBoardItemId() === item.id,
+                                          "opacity-[0.05]": props.draggingItemId() === item.id,
+                                          "translate-x-[10px]": props.draggingItemId() === item.id,
+                                          "translate-y-[-16px]": props.draggingItemId() === item.id,
+                                          "scale-[0.94]": props.draggingItemId() === item.id,
+                                        }}
+                                        onPointerDown={(event) => props.onCardPointerDown(event, item)}
+                                        onClick={() => props.onSelectBoardItem(item.id)}
+                                      >
+                                        <div class="flex items-center justify-between gap-2">
+                                          <div class="flex items-center gap-2">
+                                            <span
+                                              class="inline-flex rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px] font-semibold text-[var(--text-secondary)]"
+                                              classList={{
+                                                "border-[var(--surface-light)]": item.isPullRequest,
+                                                "text-[var(--text-primary)]": item.isPullRequest,
+                                              }}
+                                            >
+                                              {item.isPullRequest ? "Pull request" : "Issue"}
+                                            </span>
+                                            <span class="text-[11px] font-semibold text-[var(--text-muted)]">#{item.number}</span>
+                                          </div>
                                           <span
-                                            class="inline-flex rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px] font-semibold text-[var(--text-secondary)]"
-                                            classList={{
-                                              "border-[var(--surface-light)]": item.isPullRequest,
-                                              "text-[var(--text-primary)]": item.isPullRequest,
-                                            }}
+                                            class="inline-flex h-[22px] w-[30px] cursor-grab items-center justify-center gap-[3px] rounded-full border border-[var(--intake-drag-handle-border)] bg-[var(--intake-drag-handle-bg)] transition-[border-color,background-color] duration-120 hover:border-[var(--intake-drag-handle-border-hover)] hover:bg-[var(--intake-drag-handle-bg-hover)] active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--surface-light)]"
+                                            aria-hidden="true"
                                           >
-                                            {item.isPullRequest ? "Pull request" : "Issue"}
+                                            <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
+                                            <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
+                                            <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
                                           </span>
-                                          <span class="text-[11px] font-semibold text-[var(--text-muted)]">#{item.number}</span>
                                         </div>
-                                        <span
-                                          class="inline-flex h-[22px] w-[30px] cursor-grab items-center justify-center gap-[3px] rounded-full border border-[var(--intake-drag-handle-border)] bg-[var(--intake-drag-handle-bg)] transition-[border-color,background-color] duration-120 hover:border-[var(--intake-drag-handle-border-hover)] hover:bg-[var(--intake-drag-handle-bg-hover)] active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--surface-light)]"
-                                          aria-hidden="true"
-                                        >
-                                          <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
-                                          <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
-                                          <span class="h-[3px] w-[3px] rounded-full bg-[var(--intake-drag-handle-dot)]" />
-                                        </span>
-                                      </div>
 
-                                      <p class="m-0 text-[12.5px] font-semibold leading-[1.4] text-[var(--text-primary)] hover:text-[var(--text-secondary)]">
-                                        {item.title}
-                                      </p>
+                                        <p class="m-0 text-[12.5px] font-semibold leading-[1.4] text-[var(--text-primary)] hover:text-[var(--text-secondary)]">
+                                          {item.title}
+                                        </p>
 
-                                      <p class="m-0 flex flex-wrap gap-[6px] text-[11px] leading-[1.35] text-[var(--text-muted)]">
-                                        <span>{formatUpdatedAt(item.updatedAt)}</span>
-                                        <Show when={item.assignees.length > 0}>
-                                          <span>{formatIssueCountLabel(item.assignees.length)}</span>
+                                        <p class="m-0 flex flex-wrap gap-[6px] text-[11px] leading-[1.35] text-[var(--text-muted)]">
+                                          <span>{formatUpdatedAt(item.updatedAt)}</span>
+                                          <Show when={item.assignees.length > 0}>
+                                            <span>{formatIssueCountLabel(item.assignees.length)}</span>
+                                          </Show>
+                                          <Show when={item.draft}>
+                                            <span>Draft</span>
+                                          </Show>
+                                        </p>
+
+                                        <Show when={runtimeRun()}>
+                                          {(runtime) => (
+                                            <div class="flex flex-wrap items-center gap-[6px] text-[10.5px] font-semibold text-[var(--text-secondary)]">
+                                              <span class="inline-flex items-center rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px] text-[var(--text-primary)]">
+                                                {runtime().stage}
+                                              </span>
+                                              <Show when={runtime().stage === "queued" && runtime().queuePosition !== null}>
+                                                <span class="inline-flex items-center rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px]">
+                                                  queue position {runtime().queuePosition}
+                                                </span>
+                                              </Show>
+                                              <Show when={runtime().terminalStatus}>
+                                                <span class="inline-flex items-center rounded-full border border-[var(--surface-border)] px-[7px] py-[2px] text-[10.5px]">
+                                                  {runtime().terminalStatus}
+                                                </span>
+                                              </Show>
+                                            </div>
+                                          )}
                                         </Show>
-                                        <Show when={item.draft}>
-                                          <span>Draft</span>
-                                        </Show>
-                                      </p>
-                                    </article>
-                                  )}
+                                      </article>
+                                    );
+                                  }}
                                 </For>
                               </Show>
                               <Show when={hasMoreColumnItems()}>

@@ -41,8 +41,11 @@ export function MainLayout() {
     dragOverColumn,
     dragGhost,
     isCardDragging,
+    runtimeSnapshotByIssueNumber,
     selectedBoardItemId,
     selectedBoardItem,
+    selectedBoardRuntime,
+    selectedBoardRuntimeHistory,
     setSelectedBoardItemId,
     handleCardPointerDown,
     loadMoreColumnCards,
@@ -120,6 +123,7 @@ export function MainLayout() {
         visibleCardCountByColumn={visibleCardCountByColumn}
         dragOverColumn={dragOverColumn}
         draggingItemId={draggingItemId}
+        runtimeSnapshotByIssueNumber={runtimeSnapshotByIssueNumber}
         selectedBoardItemId={selectedBoardItemId}
         dragGhost={dragGhost}
         onCardPointerDown={handleCardPointerDown}
@@ -129,6 +133,8 @@ export function MainLayout() {
 
       <IssueDetailsPanel
         selectedBoardItem={selectedBoardItem}
+        selectedBoardRuntime={selectedBoardRuntime}
+        selectedBoardRuntimeHistory={selectedBoardRuntimeHistory}
         onClose={closeIssuePanel}
         onOpenGithubItemPage={openGithubItemPage}
       />

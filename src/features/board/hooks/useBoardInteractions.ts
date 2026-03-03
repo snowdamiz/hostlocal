@@ -522,6 +522,11 @@ export function useBoardInteractions(
     try {
       const unlisten = await subscribeRuntimeStageChangedEvents(repositoryFullName, (payload) => {
         setRuntimeSnapshotByIssueNumber((current) => mergeRuntimeStageChangedPayload(current, payload));
+        const activeRepository = selectedRepository();
+        const activeItem = selectedBoardItem();
+        if (activeRepository && activeItem && activeItem.number === payload.issueNumber) {
+          void hydrateRuntimeHistoryForIssue(activeRepository.fullName, activeItem.number);
+        }
       });
 
       if (requestId !== runtimeStageListenerRequestId) {
