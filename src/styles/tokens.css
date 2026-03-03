@@ -1,0 +1,59 @@
+html {
+  --app-radius: 12px;
+  --drag-region-height: 34px;
+  --app-bg: #191B1F;
+  --app-grid-line: rgba(255, 255, 255, 0.022);
+  --content-canvas-grid-line: var(--app-grid-line);
+  --content-overlay-inset: 18px;
+  --content-overlay-top-inset: 10px;
+  --surface-dark: #1E2025;
+  --surface: #25282E;
+  --surface-light: #595F69;
+  --surface-border: #32373F;
+  --text-primary: #eef3ff;
+  --text-secondary: #b6c2d8;
+  --text-muted: #949aa5;
+  --error-bg: #3b2527;
+  --error-border: #5f3539;
+  --error-text: #f5c3c5;
+  --syntax-text: var(--text-primary);
+  --syntax-comment: var(--text-muted);
+  --syntax-keyword: var(--text-secondary);
+  --syntax-string: var(--error-text);
+  --syntax-number: var(--surface-light);
+  --syntax-title: var(--text-primary);
+  --syntax-attribute: var(--text-secondary);
+  --syntax-literal: var(--text-primary);
+  --syntax-operator: var(--text-secondary);
+  --sidebar-shadow-dark: rgba(6, 9, 15, 0.1);
+  --sidebar-left-width: clamp(220px, 22vw, 320px);
+  --sidebar-right-width: clamp(260px, 25vw, 380px);
+  --sidebar-panel-transition: 220ms;
+  --intake-toast-bg: var(--surface);
+  --intake-toast-border: var(--error-border);
+  --intake-toast-title: var(--text-primary);
+  --intake-toast-rule: var(--text-primary);
+  --intake-toast-hint: var(--text-secondary);
+  --intake-toast-counter-bg: var(--app-bg);
+  --intake-toast-counter-border: var(--surface-border);
+  --intake-toast-counter-text: var(--text-secondary);
+  --intake-toast-dismiss-bg: var(--surface-dark);
+  --intake-toast-dismiss-border: var(--surface-border);
+  --intake-toast-dismiss-text: var(--text-secondary);
+  --intake-toast-shadow: var(--sidebar-shadow-dark);
+  --intake-toast-viewport-offset: 12px;
+  --intake-drag-handle-bg: var(--surface);
+  --intake-drag-handle-border: var(--surface-border);
+  --intake-drag-handle-bg-hover: var(--surface-dark);
+  --intake-drag-handle-border-hover: var(--surface-light);
+  --intake-drag-handle-dot: var(--text-muted);
+  --kanban-drag-ghost-bg: var(--surface-dark);
+  --kanban-drag-ghost-border: var(--surface-light);
+  --kanban-drag-ghost-shadow: var(--sidebar-shadow-dark);
+}
+
+
+html[data-platform="macos"] {
+  --app-radius: 16px;
+}
+
