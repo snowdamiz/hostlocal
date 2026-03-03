@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: In-Run User Control
 current_plan: 4
-status: executing
-stopped_at: Completed 06-in-run-user-control-03-PLAN.md
-last_updated: "2026-03-03T18:24:16.028Z"
+status: verifying
+stopped_at: Completed 06-in-run-user-control-04-PLAN.md
+last_updated: "2026-03-03T18:33:06.553Z"
 last_activity: 2026-03-03
 progress:
   total_phases: 10
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 22
-  completed_plans: 21
-  percent: 95
+  completed_plans: 22
+  percent: 100
 ---
 
 # Project State
@@ -35,11 +35,11 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 **Plan:** 04 of 04 (next: 06-04-PLAN.md)
 **Current Plan:** 4
 **Total Plans in Phase:** 4
-**Status:** Ready to execute
+**Status:** Phase complete — ready for verification
 **Last Activity:** 2026-03-03
-**Last Activity Description:** Completed 06-03 frontend runtime control contracts, hook orchestration, and reason-code mapping.
+**Last Activity Description:** Completed 06-04 selected-issue runtime control UI, abort confirmation, steering composer, and paused badge visibility updates.
 
-**Progress:** [██████████] 95%
+**Progress:** [██████████] 100%
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 | Phase 06-in-run-user-control P02 | 3m 4s | 2 tasks | 5 files |
 | Phase 06-in-run-user-control P01 | 19 min | 3 tasks | 3 files |
 | Phase 06-in-run-user-control P03 | 6m 38s | 3 tasks | 6 files |
+| Phase 06-in-run-user-control P04 | 5m 43s | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,9 @@ Recent decisions affecting current work:
 - [Phase 06-in-run-user-control]: Frontend command contracts mirror backend runtime control outcomes and paused metadata fields.
 - [Phase 06-in-run-user-control]: Board control orchestration uses a shared selected-issue executor for consistent gating, refresh hydration, and runtime-control toast acknowledgements.
 - [Phase 06-in-run-user-control]: Runtime control reason codes resolve through INTAKE_POLICY_REASON_MAP to keep panel and toast reasonCode/fixHint messaging consistent.
+- [Phase 06-in-run-user-control]: Keep runtime controls selected-issue scoped by passing board-hook APIs directly into IssueDetailsPanel.
+- [Phase 06-in-run-user-control]: Require explicit abort confirmation before invoking runtime abort commands.
+- [Phase 06-in-run-user-control]: Treat paused non-terminal runtime metadata as In Progress while preserving terminal precedence.
 
 ### Roadmap Evolution
 
@@ -153,6 +157,6 @@ None currently.
 
 ## Session Continuity
 
-**Last session:** 2026-03-03T18:22:57.359Z
-**Stopped At:** Completed 06-in-run-user-control-03-PLAN.md
-**Resume File:** .planning/phases/06-in-run-user-control/06-04-PLAN.md
+**Last session:** 2026-03-03T18:33:06.552Z
+**Stopped At:** Completed 06-in-run-user-control-04-PLAN.md
+**Resume File:** None

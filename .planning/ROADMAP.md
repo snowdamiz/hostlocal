@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Local Worker Runtime Boundary** - Run each task locally in isolated ephemeral workspace with command/path guardrails. (completed 2026-03-03)
 - [x] **Phase 4: Deterministic Run State Engine** - Make run stages explicit and crash-recoverable. (completed 2026-03-03)
 - [x] **Phase 5: Live Telemetry and Safe Summaries** - Stream activity in-app and expose post-run evidence without secret leakage. (completed 2026-03-03)
-- [ ] **Phase 6: In-Run User Control** - Let users pause, resume, abort, and steer active runs.
+- [x] **Phase 6: In-Run User Control** - Let users pause, resume, abort, and steer active runs. (completed 2026-03-03)
 - [ ] **Phase 7: Validation Gate Before Publish** - Require explicit code and visual validation outcomes before PR readiness.
 - [ ] **Phase 8: Automated Draft PR Publication** - Create traceable draft PRs directly from successful runs.
 - [ ] **Phase 9: Publish Reliability and Review Notification** - Guarantee publish outcome delivery with retries/backoff and in-app ready signal.
@@ -120,8 +120,8 @@ Plans:
 Plans:
 - [x] 06-01-PLAN.md - Add backend runtime control plane (pause/resume/abort/steer), paused-state persistence, and command registration. (completed 2026-03-03)
 - [x] 06-02-PLAN.md - Add runtime control acknowledgement toast infrastructure and app-wide viewport wiring. (completed 2026-03-03)
-- [ ] 06-03-PLAN.md - Wire frontend command contracts and board-hook control orchestration with state-aware gating.
-- [ ] 06-04-PLAN.md - Deliver IssueDetailsPanel control UI, abort confirmation, steering composer, and paused indicators in board/panel badges.
+- [x] 06-03-PLAN.md - Wire frontend command contracts and board-hook control orchestration with state-aware gating. (completed 2026-03-03)
+- [x] 06-04-PLAN.md - Deliver IssueDetailsPanel control UI, abort confirmation, steering composer, and paused indicators in board/panel badges. (completed 2026-03-03)
 
 ### Phase 7: Validation Gate Before Publish
 **Goal**: PR readiness is backed by explicit validation outcomes for code and browser/visual checks when applicable.
@@ -166,7 +166,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
 | 5. Live Telemetry and Safe Summaries | 3/3 | Complete | 2026-03-03 |
-| 6. In-Run User Control | 3/4 | In Progress|  |
+| 6. In-Run User Control | 4/4 | Complete | 2026-03-03 |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
 | 9. Publish Reliability and Review Notification | 0/TBD | Not started | - |
