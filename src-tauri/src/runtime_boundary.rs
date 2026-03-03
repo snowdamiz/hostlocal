@@ -1,9 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
-use tauri::State;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tempfile::TempDir;
 
 const BRANCH_PREFIX: &str = "hostlocal";
+const SIDECAR_ALIAS: &str = "hostlocal-worker";
+const WORKSPACE_REPO_DIR: &str = "repo";
+const RUNTIME_EVIDENCE_DIR: &str = "hostlocal-runtime-evidence";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +73,58 @@ impl RuntimeQueueOutcome {
             reason_code: Some(reason_code.to_string()),
             fix_hint: Some(fix_hint.to_string()),
         }
+    }
+
+    pub fn blocked(block: &GuardrailBlock) -> Self {
+        Self {
+            status: "blocked".to_string(),
+            queue_position: None,
+            reason_code: Some(block.reason_code()),
+            fix_hint: Some(block.fix_hint()),
+        }
+    }
+
+    pub fn startup_failed(reason_code: &str, fix_hint: &str) -> Self {
+        Self {
+            status: "startup_failed".to_string(),
+            queue_position: None,
+            reason_code: Some(reason_code.to_string()),
+            fix_hint: Some(fix_hint.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardrailBlock {
+    rule: String,
+    target_type: String,
+}
+
+impl GuardrailBlock {
+    pub fn new(rule: impl Into<String>, target_type: impl Into<String>) -> Self {
+        Self {
+            rule: rule.into(),
+            target_type: target_type.into(),
+        }
+    }
+
+    pub fn rule(&self) -> &str {
+        &self.rule
+    }
+
+    pub fn target_type(&self) -> &str {
+        &self.target_type
+    }
+
+    pub fn reason_code(&self) -> String {
+        format!("runtime_guardrail_{}_{}", self.rule, self.target_type)
+    }
+
+    pub fn fix_hint(&self) -> String {
+        format!(
+            "Blocked {} target because it violated {} rule.",
+            self.target_type, self.rule
+        )
     }
 }
 
@@ -136,10 +197,50 @@ impl RuntimeBoundaryState {
         repository_state.queued_runs.remove(position).is_some()
     }
 
+    pub fn finalize_active_and_promote_next(
+        &mut self,
+        repository_key: &str,
+        issue_number: i64,
+    ) -> Option<RuntimeIssueRun> {
+        let Some(repository_state) = self.repos.get_mut(repository_key) else {
+            return None;
+        };
+
+        let is_matching_active = repository_state
+            .active_run
+            .as_ref()
+            .is_some_and(|active| active.issue_number == issue_number);
+        if !is_matching_active {
+            return None;
+        }
+
+        repository_state.active_run = None;
+        let next_run = repository_state.queued_runs.pop_front();
+        if let Some(next) = next_run.clone() {
+            repository_state.active_run = Some(next);
+        }
+
+        if repository_state.active_run.is_none() && repository_state.queued_runs.is_empty() {
+            self.repos.remove(repository_key);
+        }
+
+        next_run
+    }
+
     #[cfg(test)]
     pub fn repository_queue(&self, repository_key: &str) -> Option<&RepositoryRuntimeQueue> {
         self.repos.get(repository_key)
     }
+}
+
+fn repository_segment_is_safe(segment: &str) -> bool {
+    if segment.is_empty() || segment == "." || segment == ".." {
+        return false;
+    }
+
+    segment
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
 }
 
 pub fn normalize_repository_key(repository_full_name: &str) -> Option<String> {
@@ -152,6 +253,9 @@ pub fn normalize_repository_key(repository_full_name: &str) -> Option<String> {
     let owner = segments.next()?.trim();
     let repository = segments.next()?.trim();
     if owner.is_empty() || repository.is_empty() || segments.next().is_some() {
+        return None;
+    }
+    if !repository_segment_is_safe(owner) || !repository_segment_is_safe(repository) {
         return None;
     }
 
@@ -220,6 +324,312 @@ pub fn create_runtime_issue_run(request: RuntimeEnqueueIssueRunRequest) -> Optio
     })
 }
 
+pub fn ensure_within_workspace(
+    workspace_root: &Path,
+    candidate: &Path,
+) -> Result<(), GuardrailBlock> {
+    let canonical_root = fs::canonicalize(workspace_root)
+        .map_err(|_| GuardrailBlock::new("workspace_boundary", "path"))?;
+    let canonical_candidate =
+        fs::canonicalize(candidate).map_err(|_| GuardrailBlock::new("workspace_boundary", "path"))?;
+
+    if canonical_candidate.strip_prefix(&canonical_root).is_err() {
+        return Err(GuardrailBlock::new("workspace_boundary", "path"));
+    }
+
+    Ok(())
+}
+
+fn ensure_within_workspace_for_create(
+    workspace_root: &Path,
+    candidate: &Path,
+) -> Result<(), GuardrailBlock> {
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| GuardrailBlock::new("workspace_boundary", "path"))?;
+    let canonical_root = fs::canonicalize(workspace_root)
+        .map_err(|_| GuardrailBlock::new("workspace_boundary", "path"))?;
+    let canonical_parent =
+        fs::canonicalize(parent).map_err(|_| GuardrailBlock::new("workspace_boundary", "path"))?;
+
+    if canonical_parent.strip_prefix(&canonical_root).is_err() {
+        return Err(GuardrailBlock::new("workspace_boundary", "path"));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct StartRunError {
+    outcome: RuntimeQueueOutcome,
+    workspace_root: Option<PathBuf>,
+}
+
+impl StartRunError {
+    fn guardrail(block: GuardrailBlock, workspace_root: Option<PathBuf>) -> Self {
+        Self {
+            outcome: RuntimeQueueOutcome::blocked(&block),
+            workspace_root,
+        }
+    }
+
+    fn startup(workspace_root: Option<PathBuf>) -> Self {
+        Self {
+            outcome: RuntimeQueueOutcome::startup_failed(
+                "runtime_startup_failed",
+                "Runtime startup failed before local worker execution could begin.",
+            ),
+            workspace_root,
+        }
+    }
+
+    fn with_outcome(outcome: RuntimeQueueOutcome, workspace_root: Option<PathBuf>) -> Self {
+        Self {
+            outcome,
+            workspace_root,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedWorkspace {
+    workspace_root: PathBuf,
+    repository_path: PathBuf,
+}
+
+fn runtime_prepare_failed_outcome() -> RuntimeQueueOutcome {
+    RuntimeQueueOutcome::startup_failed(
+        "runtime_workspace_prepare_failed",
+        "Runtime workspace preparation failed before local worker execution could begin.",
+    )
+}
+
+fn run_git_command(args: &[&str], current_dir: Option<&Path>) -> Result<(), RuntimeQueueOutcome> {
+    let mut command = Command::new("git");
+    command.args(args);
+    if let Some(dir) = current_dir {
+        command.current_dir(dir);
+    }
+    let status = command.status().map_err(|_| runtime_prepare_failed_outcome())?;
+    if !status.success() {
+        return Err(runtime_prepare_failed_outcome());
+    }
+
+    Ok(())
+}
+
+fn prepare_workspace_for_run(run: &RuntimeIssueRun) -> Result<PreparedWorkspace, StartRunError> {
+    let temp_dir = TempDir::new_in(std::env::temp_dir()).map_err(|_| StartRunError::startup(None))?;
+    let workspace_root = temp_dir.into_path();
+    let repository_path = workspace_root.join(WORKSPACE_REPO_DIR);
+
+    ensure_within_workspace_for_create(&workspace_root, &repository_path)
+        .map_err(|block| StartRunError::guardrail(block, Some(workspace_root.clone())))?;
+
+    let clone_url = format!(
+        "https://github.com/{}.git",
+        run.repository_full_name.trim()
+    );
+    let clone_destination = repository_path.to_string_lossy().to_string();
+    run_git_command(
+        &["clone", "--depth", "1", &clone_url, &clone_destination],
+        None,
+    )
+    .map_err(|outcome| StartRunError::with_outcome(outcome, Some(workspace_root.clone())))?;
+
+    ensure_within_workspace(&workspace_root, &repository_path)
+        .map_err(|block| StartRunError::guardrail(block, Some(workspace_root.clone())))?;
+
+    run_git_command(
+        &["switch", "-c", &run.issue_branch_name],
+        Some(&repository_path),
+    )
+    .map_err(|outcome| StartRunError::with_outcome(outcome, Some(workspace_root.clone())))?;
+
+    Ok(PreparedWorkspace {
+        workspace_root,
+        repository_path,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeTerminalStatus {
+    Success,
+    Failed,
+    Cancelled,
+    GuardrailBlocked,
+}
+
+impl RuntimeTerminalStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            RuntimeTerminalStatus::Success => "success",
+            RuntimeTerminalStatus::Failed => "failed",
+            RuntimeTerminalStatus::Cancelled => "cancelled",
+            RuntimeTerminalStatus::GuardrailBlocked => "guardrail_blocked",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeRunEvidence {
+    run_id: String,
+    repository_key: String,
+    issue_number: i64,
+    branch: String,
+    terminal_status: String,
+    blocked_reason_code: Option<String>,
+}
+
+fn generate_run_id(run: &RuntimeIssueRun) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!(
+        "{}-{}-{}",
+        run.repository_key.replace('/', "_"),
+        run.issue_number,
+        millis
+    )
+}
+
+fn write_runtime_evidence(
+    run: &RuntimeIssueRun,
+    terminal_status: RuntimeTerminalStatus,
+    blocked_reason_code: Option<String>,
+) {
+    let evidence_dir = std::env::temp_dir().join(RUNTIME_EVIDENCE_DIR);
+    if fs::create_dir_all(&evidence_dir).is_err() {
+        return;
+    }
+
+    let run_id = generate_run_id(run);
+    let evidence = RuntimeRunEvidence {
+        run_id: run_id.clone(),
+        repository_key: run.repository_key.clone(),
+        issue_number: run.issue_number,
+        branch: run.issue_branch_name.clone(),
+        terminal_status: terminal_status.as_str().to_string(),
+        blocked_reason_code,
+    };
+    let encoded = match serde_json::to_vec_pretty(&evidence) {
+        Ok(encoded) => encoded,
+        Err(_) => return,
+    };
+    let _ = fs::write(evidence_dir.join(format!("{run_id}.json")), encoded);
+}
+
+fn cleanup_workspace(workspace_root: Option<&Path>) {
+    let Some(workspace_root) = workspace_root else {
+        return;
+    };
+
+    let _ = fs::remove_dir_all(workspace_root);
+}
+
+fn finalize_run(
+    app: &AppHandle,
+    run: RuntimeIssueRun,
+    workspace_root: Option<PathBuf>,
+    terminal_status: RuntimeTerminalStatus,
+    blocked_reason_code: Option<String>,
+) {
+    write_runtime_evidence(&run, terminal_status, blocked_reason_code);
+    cleanup_workspace(workspace_root.as_deref());
+
+    let next_run = {
+        let state = app.state::<RuntimeBoundarySharedState>();
+        let mut queue = match state.lock() {
+            Ok(queue) => queue,
+            Err(_) => return,
+        };
+        queue.finalize_active_and_promote_next(&run.repository_key, run.issue_number)
+    };
+
+    if let Some(next_run) = next_run {
+        if let Err(start_error) = start_run_worker(app, next_run.clone()) {
+            let next_terminal_status = if start_error.outcome.status == "blocked" {
+                RuntimeTerminalStatus::GuardrailBlocked
+            } else {
+                RuntimeTerminalStatus::Failed
+            };
+            let next_reason_code = start_error.outcome.reason_code.clone();
+            finalize_run(
+                app,
+                next_run,
+                start_error.workspace_root,
+                next_terminal_status,
+                next_reason_code,
+            );
+        }
+    }
+}
+
+fn spawn_sidecar_for_run(
+    app: &AppHandle,
+    run: &RuntimeIssueRun,
+    prepared: &PreparedWorkspace,
+) -> Result<(), StartRunError> {
+    ensure_within_workspace(&prepared.workspace_root, &prepared.repository_path)
+        .map_err(|block| StartRunError::guardrail(block, Some(prepared.workspace_root.clone())))?;
+
+    let command = app
+        .shell()
+        .sidecar(SIDECAR_ALIAS)
+        .map_err(|_| {
+            StartRunError::guardrail(
+                GuardrailBlock::new("command_scope", "command"),
+                Some(prepared.workspace_root.clone()),
+            )
+        })?
+        .current_dir(prepared.repository_path.clone());
+
+    let (mut receiver, _child) = command
+        .spawn()
+        .map_err(|_| StartRunError::startup(Some(prepared.workspace_root.clone())))?;
+
+    let app_handle = app.clone();
+    let run_for_finalize = run.clone();
+    let workspace_for_finalize = prepared.workspace_root.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut terminal_status = RuntimeTerminalStatus::Cancelled;
+        while let Some(event) = receiver.recv().await {
+            match event {
+                CommandEvent::Terminated(payload) => {
+                    terminal_status = if payload.code == Some(0) {
+                        RuntimeTerminalStatus::Success
+                    } else {
+                        RuntimeTerminalStatus::Failed
+                    };
+                    break;
+                }
+                CommandEvent::Error(_) => {
+                    terminal_status = RuntimeTerminalStatus::Failed;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        finalize_run(
+            &app_handle,
+            run_for_finalize,
+            Some(workspace_for_finalize),
+            terminal_status,
+            None,
+        );
+    });
+
+    Ok(())
+}
+
+fn start_run_worker(app: &AppHandle, run: RuntimeIssueRun) -> Result<(), StartRunError> {
+    let prepared = prepare_workspace_for_run(&run)?;
+    spawn_sidecar_for_run(app, &run, &prepared)
+}
+
 pub fn runtime_enqueue_issue_run_inner(
     state: &RuntimeBoundarySharedState,
     request: RuntimeEnqueueIssueRunRequest,
@@ -272,10 +682,43 @@ pub fn runtime_dequeue_issue_run_inner(
 
 #[tauri::command]
 pub async fn runtime_enqueue_issue_run(
+    app: AppHandle,
     state: State<'_, RuntimeBoundarySharedState>,
     request: RuntimeEnqueueIssueRunRequest,
 ) -> Result<RuntimeQueueOutcome, String> {
-    runtime_enqueue_issue_run_inner(&state, request)
+    let Some(run) = create_runtime_issue_run(request) else {
+        return Ok(RuntimeQueueOutcome::not_found(
+            "invalid_runtime_request",
+            "Select a valid repository issue before starting a run.",
+        ));
+    };
+
+    let outcome = {
+        let mut queue = state.lock()?;
+        queue.enqueue_run(run.clone())
+    };
+    if outcome.status != "started" {
+        return Ok(outcome);
+    }
+
+    if let Err(start_error) = start_run_worker(&app, run.clone()) {
+        let terminal_status = if start_error.outcome.status == "blocked" {
+            RuntimeTerminalStatus::GuardrailBlocked
+        } else {
+            RuntimeTerminalStatus::Failed
+        };
+        let blocked_reason_code = start_error.outcome.reason_code.clone();
+        finalize_run(
+            &app,
+            run,
+            start_error.workspace_root,
+            terminal_status,
+            blocked_reason_code,
+        );
+        return Ok(start_error.outcome);
+    }
+
+    Ok(outcome)
 }
 
 #[tauri::command]
