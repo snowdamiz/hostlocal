@@ -118,7 +118,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 06-01-PLAN.md - Add backend runtime control plane (pause/resume/abort/steer), paused-state persistence, and command registration.
+- [x] 06-01-PLAN.md - Add backend runtime control plane (pause/resume/abort/steer), paused-state persistence, and command registration. (completed 2026-03-03)
 - [x] 06-02-PLAN.md - Add runtime control acknowledgement toast infrastructure and app-wide viewport wiring. (completed 2026-03-03)
 - [ ] 06-03-PLAN.md - Wire frontend command contracts and board-hook control orchestration with state-aware gating.
 - [ ] 06-04-PLAN.md - Deliver IssueDetailsPanel control UI, abort confirmation, steering composer, and paused indicators in board/panel badges.
@@ -166,7 +166,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
 | 5. Live Telemetry and Safe Summaries | 3/3 | Complete | 2026-03-03 |
-| 6. In-Run User Control | 1/4 | In Progress | - |
+| 6. In-Run User Control | 2/4 | In Progress | - |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
 | 9. Publish Reliability and Review Notification | 0/TBD | Not started | - |

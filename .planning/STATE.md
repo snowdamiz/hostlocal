@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-last_updated: "2026-03-03T17:48:22.925Z"
+status: unknown
+last_updated: "2026-03-03T18:06:30Z"
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 22
-  completed_plans: 19
+  completed_plans: 21
 ---
 
 # Project State
@@ -27,7 +27,7 @@ Plan: 03 of 04 (next: 06-03-PLAN.md)
 Current Plan: 3
 Total Plans in Phase: 4
 Status: In Progress
-Last activity: 2026-03-03 — Completed 06-02 runtime control acknowledgement toast infrastructure.
+Last activity: 2026-03-03 — Completed 06-01 backend runtime control plane primitives.
 
 Progress: [██████░░░░] 60%
 
@@ -66,6 +66,7 @@ Progress: [██████░░░░] 60%
 | Phase 05-live-telemetry-and-safe-summaries P02 | 9 min | 3 tasks | 3 files |
 | Phase 05-live-telemetry-and-safe-summaries P03 | 7 min | 3 tasks | 5 files |
 | Phase 06-in-run-user-control P02 | 3m 4s | 2 tasks | 5 files |
+| Phase 06-in-run-user-control P01 | 19 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,9 @@ Recent decisions affecting current work:
 - [Phase 06-in-run-user-control]: Controls are panel-primary and selected-issue scoped, with state-aware enablement and explicit acknowledgement for pause/resume/abort/steer actions.
 - [Phase 06-in-run-user-control]: Reused intake toast-store architecture but kept a dedicated runtime-control store contract to avoid semantic coupling.
 - [Phase 06-in-run-user-control]: Mounted runtime-control toasts in the global app shell so control acknowledgements remain visible regardless of selected board state.
+- [Phase 06-in-run-user-control]: Persist pause state as metadata (is_paused, paused_at) instead of introducing a new stage value.
+- [Phase 06-in-run-user-control]: Use active-run control registry arbitration so paused runs defer terminal finalization and duplicate terminal races are ignored.
+- [Phase 06-in-run-user-control]: Standardize pause/resume/abort/steer responses on RuntimeRunControlOutcome with explicit acknowledged/rejected semantics.
 
 ### Roadmap Evolution
 
@@ -135,6 +139,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 12:48
-Stopped at: Completed 06-in-run-user-control-02-PLAN.md
+Last session: 2026-03-03 13:06
+Stopped at: Completed 06-in-run-user-control-01-PLAN.md
 Resume file: .planning/phases/06-in-run-user-control/06-03-PLAN.md
