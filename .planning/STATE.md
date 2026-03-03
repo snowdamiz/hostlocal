@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-03T08:55:21.266Z"
+last_updated: "2026-03-03T17:10:51Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-02)
 
 **Core value:** A user can move a GitHub issue to in-progress and reliably get a review-ready PR from a fast local agent run, with clear visibility and control throughout execution.
-**Current focus:** Phase 05: Live Telemetry and Safe Summaries
+**Current focus:** Phase 06: In-Run User Control
 
 ## Current Position
 
-Phase: 05 of 10 (Live Telemetry and Safe Summaries)
-Plan: 3 of 3 in current phase
-Status: Complete
-Last activity: 2026-03-03 — Completed plan 05-03 (3/3) with verification passed.
+Phase: 06 of 10 (In-Run User Control)
+Plan: Context gathered (pre-planning)
+Status: In Progress
+Last activity: 2026-03-03 — Captured phase 06 context decisions for pause/resume/abort/steering behavior.
 
-Progress: [██████████] 100%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -114,6 +114,7 @@ Recent decisions affecting current work:
 - [Phase 05-live-telemetry-and-safe-summaries]: Telemetry and summary reads re-sanitize messages to protect against legacy unsanitized rows.
 - [Phase 05-live-telemetry-and-safe-summaries]: Keep telemetry state normalized in hook maps keyed by issue number to prevent cross-repo bleed-through.
 - [Phase 05-live-telemetry-and-safe-summaries]: Normalize summary validation outcomes in frontend to explicit not-run/not-found fallbacks when payloads are incomplete.
+- [Phase 06-in-run-user-control]: Controls are panel-primary and selected-issue scoped, with state-aware enablement and explicit acknowledgement for pause/resume/abort/steer actions.
 
 ### Roadmap Evolution
 
@@ -129,6 +130,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 03:46
-Stopped at: Completed 05-live-telemetry-and-safe-summaries-03-PLAN.md
-Resume file: None (phase 05 complete; next work starts at phase 06 planning)
+Last session: 2026-03-03 12:10
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-in-run-user-control/06-CONTEXT.md
