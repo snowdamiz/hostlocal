@@ -1678,6 +1678,49 @@ pub struct RuntimeIssueRunTelemetryRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunSummaryCompletion {
+    pub status: String,
+    pub terminal_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunSummaryKeyAction {
+    pub kind: String,
+    pub stage: String,
+    pub message: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunSummaryValidationOutcomes {
+    pub code: String,
+    pub browser: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunSummary {
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub issue_number: i64,
+    pub run_id: i64,
+    pub completion: RuntimeIssueRunSummaryCompletion,
+    pub key_actions: Vec<RuntimeIssueRunSummaryKeyAction>,
+    pub validation_outcomes: RuntimeIssueRunSummaryValidationOutcomes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeIssueRunSummaryRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+    pub run_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeRunStageChangedEventPayload {
     pub run_id: i64,
     pub repository_full_name: String,
@@ -2019,6 +2062,7 @@ fn runtime_get_issue_run_history_inner(
 
 const DEFAULT_RUNTIME_ISSUE_TELEMETRY_LIMIT: usize = 100;
 const MAX_RUNTIME_ISSUE_TELEMETRY_LIMIT: usize = 250;
+const MAX_RUNTIME_SUMMARY_KEY_ACTIONS: usize = 8;
 
 fn resolve_runtime_issue_telemetry_limit(limit: Option<usize>) -> usize {
     limit
@@ -2115,6 +2159,129 @@ fn runtime_get_issue_run_telemetry_inner(
     })
 }
 
+fn parse_validation_status(value: &str) -> Option<&'static str> {
+    let lowered = value.to_ascii_lowercase();
+    if lowered.contains("not-found") || lowered.contains("not found") {
+        return Some("not-found");
+    }
+    if lowered.contains("not-run") || lowered.contains("not run") {
+        return Some("not-run");
+    }
+    if lowered.contains("timeout") || lowered.contains("timed out") {
+        return Some("timeout");
+    }
+    if lowered.contains("pass") || lowered.contains("passed") || lowered.contains("success") {
+        return Some("pass");
+    }
+    if lowered.contains("fail") || lowered.contains("failed") || lowered.contains("error") {
+        return Some("fail");
+    }
+    None
+}
+
+fn derive_validation_outcomes(
+    events: &[RuntimePersistedRunEvent],
+) -> RuntimeIssueRunSummaryValidationOutcomes {
+    let mut code_status: Option<String> = None;
+    let mut browser_status: Option<String> = None;
+    let mut validation_seen = false;
+
+    for event in events {
+        let kind = event.kind.to_ascii_lowercase();
+        let stage = event.stage.to_ascii_lowercase();
+        let message = event.message.to_ascii_lowercase();
+
+        let is_validation_event = kind.contains("validation")
+            || stage.contains("validation")
+            || stage.contains("validating");
+        if is_validation_event {
+            validation_seen = true;
+        }
+
+        let target = if stage.contains("code") || message.contains("code validation") {
+            Some("code")
+        } else if stage.contains("browser")
+            || stage.contains("visual")
+            || message.contains("browser validation")
+            || message.contains("visual validation")
+        {
+            Some("browser")
+        } else {
+            None
+        };
+        let Some(target) = target else {
+            continue;
+        };
+
+        let status = parse_validation_status(&stage).or_else(|| parse_validation_status(&message));
+        let Some(status) = status else {
+            continue;
+        };
+
+        if target == "code" && code_status.is_none() {
+            code_status = Some(status.to_string());
+            continue;
+        }
+        if target == "browser" && browser_status.is_none() {
+            browser_status = Some(status.to_string());
+        }
+    }
+
+    let fallback = if validation_seen {
+        "not-found".to_string()
+    } else {
+        "not-run".to_string()
+    };
+
+    RuntimeIssueRunSummaryValidationOutcomes {
+        code: code_status.unwrap_or_else(|| fallback.clone()),
+        browser: browser_status.unwrap_or(fallback),
+    }
+}
+
+fn runtime_get_issue_run_summary_inner(
+    conn: &Connection,
+    repository_key: &str,
+    repository_full_name: &str,
+    issue_number: i64,
+    run_id: Option<i64>,
+) -> Result<RuntimeIssueRunSummary, String> {
+    let target_run = load_runtime_run_for_issue(conn, repository_key, issue_number, run_id)?
+        .ok_or_else(|| "Runtime summary is unavailable for the selected issue.".to_string())?;
+    let telemetry_events =
+        load_runtime_run_events_newest_first(conn, target_run.run_id).map_err(|e| e.to_string())?;
+
+    let key_actions = telemetry_events
+        .iter()
+        .filter(|event| event.include_in_summary)
+        .take(MAX_RUNTIME_SUMMARY_KEY_ACTIONS)
+        .map(|event| RuntimeIssueRunSummaryKeyAction {
+            kind: event.kind.clone(),
+            stage: event.stage.clone(),
+            message: event.message.clone(),
+            created_at: event.created_at.clone(),
+        })
+        .collect();
+
+    let completion_status = target_run
+        .terminal_status
+        .map(|status| status.as_str().to_string())
+        .unwrap_or_else(|| "in-progress".to_string());
+
+    Ok(RuntimeIssueRunSummary {
+        repository_full_name: repository_full_name.to_string(),
+        repository_key: repository_key.to_string(),
+        issue_number,
+        run_id: target_run.run_id,
+        completion: RuntimeIssueRunSummaryCompletion {
+            status: completion_status,
+            terminal_at: target_run.terminal_at,
+        },
+        key_actions,
+        validation_outcomes: derive_validation_outcomes(&telemetry_events),
+    })
+}
+
 pub fn runtime_get_repository_run_snapshot(
     db_path: &Path,
     repository_full_name: &str,
@@ -2173,6 +2340,30 @@ pub fn runtime_get_issue_run_telemetry(
             request.issue_number,
             request.run_id,
             request.limit,
+        )
+        .map_err(runtime_invariant_error)
+    })
+}
+
+pub fn runtime_get_issue_run_summary(
+    db_path: &Path,
+    request: RuntimeIssueRunSummaryRequest,
+) -> Result<RuntimeIssueRunSummary, String> {
+    let repository_full_name = request.repository_full_name.trim();
+    let repository_key = normalize_repository_key(repository_full_name).ok_or_else(|| {
+        "Select a valid repository issue before loading runtime summary.".to_string()
+    })?;
+    if request.issue_number <= 0 {
+        return Err("Select a valid repository issue before loading runtime summary.".to_string());
+    }
+
+    with_connection(db_path, |conn| {
+        runtime_get_issue_run_summary_inner(
+            conn,
+            &repository_key,
+            repository_full_name,
+            request.issue_number,
+            request.run_id,
         )
         .map_err(runtime_invariant_error)
     })

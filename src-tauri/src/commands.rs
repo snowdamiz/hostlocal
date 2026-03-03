@@ -1,6 +1,9 @@
 use crate::{
     db::{with_connection, DbPath},
-    runtime_boundary::{self, RuntimeIssueRunHistoryRequest, RuntimeIssueRunTelemetryRequest},
+    runtime_boundary::{
+        self, RuntimeIssueRunHistoryRequest, RuntimeIssueRunSummaryRequest,
+        RuntimeIssueRunTelemetryRequest,
+    },
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
@@ -253,4 +256,12 @@ pub fn runtime_get_issue_run_telemetry(
     request: RuntimeIssueRunTelemetryRequest,
 ) -> Result<runtime_boundary::RuntimeIssueRunTelemetry, String> {
     runtime_boundary::runtime_get_issue_run_telemetry(&db_path.0, request)
+}
+
+#[tauri::command]
+pub fn runtime_get_issue_run_summary(
+    db_path: State<'_, DbPath>,
+    request: RuntimeIssueRunSummaryRequest,
+) -> Result<runtime_boundary::RuntimeIssueRunSummary, String> {
+    runtime_boundary::runtime_get_issue_run_summary(&db_path.0, request)
 }
