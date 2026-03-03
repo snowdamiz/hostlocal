@@ -463,6 +463,7 @@ enum RuntimeTerminalControlAction {
 #[derive(Debug, Default)]
 struct RuntimeActiveRunControl {
     child: Option<CommandChild>,
+    workspace_root: Option<PathBuf>,
     is_paused: bool,
     pending_terminal: Option<RuntimeTerminalRequest>,
     abort_requested: bool,
@@ -470,9 +471,10 @@ struct RuntimeActiveRunControl {
 }
 
 impl RuntimeActiveRunControl {
-    fn with_child(child: CommandChild) -> Self {
+    fn with_child(child: CommandChild, workspace_root: PathBuf) -> Self {
         Self {
             child: Some(child),
+            workspace_root: Some(workspace_root),
             is_paused: false,
             pending_terminal: None,
             abort_requested: false,
@@ -481,9 +483,10 @@ impl RuntimeActiveRunControl {
     }
 
     #[cfg(test)]
-    fn for_test() -> Self {
+    fn for_test(workspace_root: Option<PathBuf>) -> Self {
         Self {
             child: None,
+            workspace_root,
             is_paused: false,
             pending_terminal: None,
             abort_requested: false,
@@ -608,15 +611,27 @@ impl RuntimeBoundaryState {
         active_runs
     }
 
-    fn register_active_run_control(&mut self, run_id: i64, child: CommandChild) {
+    fn register_active_run_control(&mut self, run_id: i64, child: CommandChild, workspace_root: PathBuf) {
         self.active_controls
-            .insert(run_id, RuntimeActiveRunControl::with_child(child));
+            .insert(run_id, RuntimeActiveRunControl::with_child(child, workspace_root));
     }
 
     #[cfg(test)]
     fn register_active_run_control_for_test(&mut self, run_id: i64) {
         self.active_controls
-            .insert(run_id, RuntimeActiveRunControl::for_test());
+            .insert(run_id, RuntimeActiveRunControl::for_test(None));
+    }
+
+    #[cfg(test)]
+    fn register_active_run_control_for_test_with_workspace(
+        &mut self,
+        run_id: i64,
+        workspace_root: PathBuf,
+    ) {
+        self.active_controls.insert(
+            run_id,
+            RuntimeActiveRunControl::for_test(Some(workspace_root)),
+        );
     }
 
     fn clear_active_run_control(&mut self, run_id: i64) {
@@ -670,6 +685,12 @@ impl RuntimeBoundaryState {
 
     fn active_run_is_paused(&self, run_id: i64) -> Option<bool> {
         self.active_controls.get(&run_id).map(|control| control.is_paused)
+    }
+
+    fn active_run_workspace_root(&self, run_id: i64) -> Option<PathBuf> {
+        self.active_controls
+            .get(&run_id)
+            .and_then(|control| control.workspace_root.clone())
     }
 
     fn plan_terminal_action(
@@ -2980,7 +3001,7 @@ fn spawn_sidecar_for_run(
                 return Err(StartRunError::startup(Some(prepared.workspace_root.clone())));
             }
         };
-        queue.register_active_run_control(run_id, child);
+        queue.register_active_run_control(run_id, child, prepared.workspace_root.clone());
     }
 
     let app_handle = app.clone();
@@ -3462,7 +3483,7 @@ pub async fn runtime_abort_issue_run(
         ));
     }
 
-    let child = {
+    let (child, workspace_root) = {
         let mut queue = state.lock()?;
         if queue.mark_active_run_abort_requested(run.run_id).is_err() {
             return Ok(RuntimeRunControlOutcome::rejected(
@@ -3471,7 +3492,9 @@ pub async fn runtime_abort_issue_run(
                 "Abort is only available for active or paused runs.",
             ));
         }
-        queue.take_active_run_child(run.run_id)
+        let workspace_root = queue.active_run_workspace_root(run.run_id);
+        let child = queue.take_active_run_child(run.run_id);
+        (child, workspace_root)
     };
     if let Some(child) = child {
         let _ = child.kill();
@@ -3493,7 +3516,7 @@ pub async fn runtime_abort_issue_run(
     finalize_run_with_control_gate(
         &app,
         persisted_run_to_runtime_issue_run(run.clone()),
-        None,
+        workspace_root,
         RuntimeTerminalStatus::Cancelled,
         Some("runtime_user_abort".to_string()),
         Some(fix_hint),
