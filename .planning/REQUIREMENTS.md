@@ -29,10 +29,10 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Agent Control
 
-- [ ] **CTRL-01**: User can pause an active run.
-- [ ] **CTRL-02**: User can resume a paused run.
-- [ ] **CTRL-03**: User can abort an active run and trigger safe cleanup.
-- [ ] **CTRL-04**: User can send steering instructions to an in-progress run and receive acknowledgement.
+- [x] **CTRL-01**: User can pause an active run.
+- [x] **CTRL-02**: User can resume a paused run.
+- [x] **CTRL-03**: User can abort an active run and trigger safe cleanup.
+- [x] **CTRL-04**: User can send steering instructions to an in-progress run and receive acknowledgement.
 
 ### Validation
 
@@ -94,10 +94,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RUN-03 | Phase 3 | Complete |
 | ORCH-01 | Phase 4 | Complete |
 | ORCH-02 | Phase 4 | Complete |
-| CTRL-01 | Phase 6 | Pending |
-| CTRL-02 | Phase 6 | Pending |
-| CTRL-03 | Phase 6 | Pending |
-| CTRL-04 | Phase 6 | Pending |
+| CTRL-01 | Phase 6 | Complete |
+| CTRL-02 | Phase 6 | Complete |
+| CTRL-03 | Phase 6 | Complete |
+| CTRL-04 | Phase 6 | Complete |
 | VAL-01 | Phase 7 | Pending |
 | VAL-02 | Phase 7 | Pending |
 | GIT-01 | Phase 8 | Pending |

@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-03T17:10:51Z"
+status: in_progress
+last_updated: "2026-03-03T17:48:22.925Z"
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 5
-  total_plans: 18
-  completed_plans: 18
+  total_plans: 22
+  completed_plans: 19
 ---
 
 # Project State
@@ -23,11 +23,13 @@ See: .planning/PROJECT.md (updated 2026-03-02)
 ## Current Position
 
 Phase: 06 of 10 (In-Run User Control)
-Plan: Context gathered (pre-planning)
+Plan: 03 of 04 (next: 06-03-PLAN.md)
+Current Plan: 3
+Total Plans in Phase: 4
 Status: In Progress
-Last activity: 2026-03-03 — Captured phase 06 context decisions for pause/resume/abort/steering behavior.
+Last activity: 2026-03-03 — Completed 06-02 runtime control acknowledgement toast infrastructure.
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -63,6 +65,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05-live-telemetry-and-safe-summaries P01 | 10 min | 3 tasks | 4 files |
 | Phase 05-live-telemetry-and-safe-summaries P02 | 9 min | 3 tasks | 3 files |
 | Phase 05-live-telemetry-and-safe-summaries P03 | 7 min | 3 tasks | 5 files |
+| Phase 06-in-run-user-control P02 | 3m 4s | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -115,6 +118,8 @@ Recent decisions affecting current work:
 - [Phase 05-live-telemetry-and-safe-summaries]: Keep telemetry state normalized in hook maps keyed by issue number to prevent cross-repo bleed-through.
 - [Phase 05-live-telemetry-and-safe-summaries]: Normalize summary validation outcomes in frontend to explicit not-run/not-found fallbacks when payloads are incomplete.
 - [Phase 06-in-run-user-control]: Controls are panel-primary and selected-issue scoped, with state-aware enablement and explicit acknowledgement for pause/resume/abort/steer actions.
+- [Phase 06-in-run-user-control]: Reused intake toast-store architecture but kept a dedicated runtime-control store contract to avoid semantic coupling.
+- [Phase 06-in-run-user-control]: Mounted runtime-control toasts in the global app shell so control acknowledgements remain visible regardless of selected board state.
 
 ### Roadmap Evolution
 
@@ -130,6 +135,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-03 12:10
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-in-run-user-control/06-CONTEXT.md
+Last session: 2026-03-03 12:48
+Stopped at: Completed 06-in-run-user-control-02-PLAN.md
+Resume file: .planning/phases/06-in-run-user-control/06-03-PLAN.md

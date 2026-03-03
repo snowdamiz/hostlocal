@@ -115,7 +115,13 @@ Plans:
   2. User can resume a paused run and execution continues from the paused point.
   3. User can abort an active run and receives cancelled status with safe cleanup behavior.
   4. User can send steering instructions to an in-progress run and receives acknowledgement.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 06-01-PLAN.md - Add backend runtime control plane (pause/resume/abort/steer), paused-state persistence, and command registration.
+- [x] 06-02-PLAN.md - Add runtime control acknowledgement toast infrastructure and app-wide viewport wiring. (completed 2026-03-03)
+- [ ] 06-03-PLAN.md - Wire frontend command contracts and board-hook control orchestration with state-aware gating.
+- [ ] 06-04-PLAN.md - Deliver IssueDetailsPanel control UI, abort confirmation, steering composer, and paused indicators in board/panel badges.
 
 ### Phase 7: Validation Gate Before Publish
 **Goal**: PR readiness is backed by explicit validation outcomes for code and browser/visual checks when applicable.
@@ -160,7 +166,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
 | 5. Live Telemetry and Safe Summaries | 3/3 | Complete | 2026-03-03 |
-| 6. In-Run User Control | 0/TBD | Not started | - |
+| 6. In-Run User Control | 1/4 | In Progress | - |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
 | 9. Publish Reliability and Review Notification | 0/TBD | Not started | - |
