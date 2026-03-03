@@ -5372,6 +5372,64 @@ https://example.com/callback?access_token=my-token-value";
     }
 
     #[test]
+    fn runtime_boundary_abort_race_cleanup_uses_control_workspace_context() {
+        let mut state = RuntimeBoundaryState::default();
+        let run = build_run_with_id("owner/repo", 7106, "Abort race cleanup run", 7106);
+        assert_eq!(state.enqueue_run(run.clone()), RuntimeQueueOutcome::started());
+
+        let workspace = tempdir().expect("workspace tempdir");
+        let workspace_root = workspace.path().to_path_buf();
+        let artifact_path = workspace_root.join("artifact.txt");
+        std::fs::write(&artifact_path, "artifact").expect("write workspace artifact");
+
+        state.register_active_run_control_for_test_with_workspace(
+            run.run_id.expect("run id"),
+            workspace_root.clone(),
+        );
+
+        let first = state.plan_terminal_action(
+            run.run_id.expect("run id"),
+            RuntimeTerminalRequest {
+                terminal_status: RuntimeTerminalStatus::Cancelled,
+                reason_code: Some("runtime_user_abort".to_string()),
+                fix_hint: Some("Issue run was aborted by user request.".to_string()),
+                workspace_root: None,
+            },
+        );
+        let RuntimeTerminalControlAction::Finalize(first_request) = first else {
+            panic!("first terminal action should finalize abort request");
+        };
+        assert_eq!(
+            first_request.workspace_root.as_deref(),
+            Some(workspace_root.as_path()),
+            "abort finalize should use workspace context from control state when terminal payload omits it"
+        );
+        assert!(
+            finalize_workspace_cleanup(first_request.workspace_root.as_deref()),
+            "cleanup should attempt removal when workspace context is available"
+        );
+        assert!(
+            !workspace_root.exists(),
+            "workspace directory should be removed even when abort finalizes before sidecar termination context"
+        );
+
+        let duplicate = state.plan_terminal_action(
+            run.run_id.expect("run id"),
+            RuntimeTerminalRequest {
+                terminal_status: RuntimeTerminalStatus::Failed,
+                reason_code: Some("runtime_worker_failed".to_string()),
+                fix_hint: Some("Retry after fixing the worker error.".to_string()),
+                workspace_root: None,
+            },
+        );
+        assert_eq!(
+            duplicate,
+            RuntimeTerminalControlAction::Ignore,
+            "terminal arbitration should continue suppressing duplicate finalize attempts"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_dequeue_removes_queued_only_by_issue_identity() {
         let mut state = RuntimeBoundaryState::default();
         let first = build_run("owner/repo", 201, "First");
