@@ -24,7 +24,7 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Orchestration
 
-- [ ] **ORCH-01**: User can see deterministic run stages (`queued`, `preparing`, `coding`, `validating`, `publishing`, `done|failed|cancelled`).
+- [x] **ORCH-01**: User can see deterministic run stages (`queued`, `preparing`, `coding`, `validating`, `publishing`, `done|failed|cancelled`).
 - [x] **ORCH-02**: Run state is persisted so the app can recover/reconcile correctly after restart or crash.
 
 ### Agent Control
@@ -92,7 +92,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RUN-01 | Phase 3 | Complete |
 | RUN-02 | Phase 3 | Complete |
 | RUN-03 | Phase 3 | Complete |
-| ORCH-01 | Phase 4 | Pending |
+| ORCH-01 | Phase 4 | Complete |
 | ORCH-02 | Phase 4 | Complete |
 | CTRL-01 | Phase 6 | Pending |
 | CTRL-02 | Phase 6 | Pending |

@@ -87,7 +87,7 @@ Plans:
 
 Plans:
 - [x] 04-01-PLAN.md - Persist canonical runtime run state, stage transitions, and terminal history in SQLite with deterministic retention. (completed 2026-03-03)
-- [ ] 04-02-PLAN.md - Reconcile persisted runtime state at startup and expose snapshot/event contracts for deterministic stage delivery.
+- [x] 04-02-PLAN.md - Reconcile persisted runtime state at startup and expose snapshot/event contracts for deterministic stage delivery. (completed 2026-03-03)
 - [ ] 04-03-PLAN.md - Render runtime stage, queue position, and durable terminal history in Kanban cards and issue details panel.
 
 ### Phase 5: Live Telemetry and Safe Summaries
@@ -153,7 +153,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 2. Policy-Gated Issue Intake | 3/3 | Complete | 2026-03-02 |
 | 02.1. Production Standards Refactor (INSERTED) | 6/6 | Complete    | 2026-03-03 |
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
-| 4. Deterministic Run State Engine | 1/3 | In Progress | - |
+| 4. Deterministic Run State Engine | 2/3 | In Progress | - |
 | 5. Live Telemetry and Safe Summaries | 0/TBD | Not started | - |
 | 6. In-Run User Control | 0/TBD | Not started | - |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
