@@ -1,15 +1,4 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import hljs from "highlight.js/lib/core";
-import bashLanguage from "highlight.js/lib/languages/bash";
-import javascriptLanguage from "highlight.js/lib/languages/javascript";
-import jsonLanguage from "highlight.js/lib/languages/json";
-import markdownLanguage from "highlight.js/lib/languages/markdown";
-import plaintextLanguage from "highlight.js/lib/languages/plaintext";
-import rustLanguage from "highlight.js/lib/languages/rust";
-import shellLanguage from "highlight.js/lib/languages/shell";
-import typescriptLanguage from "highlight.js/lib/languages/typescript";
-import xmlLanguage from "highlight.js/lib/languages/xml";
-import yamlLanguage from "highlight.js/lib/languages/yaml";
 import { siGithub } from "simple-icons";
 import {
   githubAttemptIssueIntake,
@@ -30,6 +19,8 @@ import {
 } from "../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../intake/intake-state";
 import { pushIntakeRejectionToast } from "../intake/toast-store";
+import { AGENT_IN_PROGRESS_LABEL_PREFIX, inferDefaultColumn } from "../features/board/column-inference";
+import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../features/issue-content/issue-body";
 
 type KanbanColumnKey = "todo" | "inProgress" | "inReview" | "done";
 const CANVAS_DEFAULT_PAN_X = 0;
@@ -40,7 +31,7 @@ const CANVAS_MIN_ZOOM = 0.35;
 const CANVAS_MAX_ZOOM = 2.6;
 const CANVAS_RESET_DURATION_MS = 320;
 const BOARD_ORIGIN_X = 66;
-const BOARD_ORIGIN_Y = 160;
+const BOARD_ORIGIN_Y = 100;
 const KANBAN_COLUMN_PAGE_SIZE = 6;
 const CARD_POINTER_DRAG_THRESHOLD_PX = 6;
 const DRAG_GHOST_CURSOR_OFFSET_X = 18;
@@ -100,32 +91,7 @@ interface LoadRepositoryItemsOptions {
   background?: boolean;
 }
 
-const ISSUE_IN_PROGRESS_LABELS = new Set(["in progress", "in-progress", "doing", "wip", "working"]);
-const AGENT_IN_PROGRESS_LABEL_PREFIX = "agent:";
 const DEFAULT_AGENT_LABEL = "hostlocal";
-
-let hasRegisteredHighlightLanguages = false;
-
-const ensureHighlightLanguagesRegistered = () => {
-  if (hasRegisteredHighlightLanguages) {
-    return;
-  }
-
-  hljs.registerLanguage("plaintext", plaintextLanguage);
-  hljs.registerLanguage("bash", bashLanguage);
-  hljs.registerLanguage("shell", shellLanguage);
-  hljs.registerLanguage("javascript", javascriptLanguage);
-  hljs.registerLanguage("typescript", typescriptLanguage);
-  hljs.registerLanguage("json", jsonLanguage);
-  hljs.registerLanguage("yaml", yamlLanguage);
-  hljs.registerLanguage("rust", rustLanguage);
-  hljs.registerLanguage("markdown", markdownLanguage);
-  hljs.registerLanguage("xml", xmlLanguage);
-
-  hasRegisteredHighlightLanguages = true;
-};
-
-ensureHighlightLanguagesRegistered();
 
 const parseTimestamp = (isoDate: string) => {
   const timestamp = Date.parse(isoDate);
@@ -146,202 +112,12 @@ const formatUpdatedAt = (isoDate: string) => {
   })}`;
 };
 
-const inferDefaultColumn = (item: GithubRepositoryItem): KanbanColumnKey => {
-  if (item.state === "closed") {
-    return "done";
-  }
-
-  if (item.isPullRequest) {
-    return "inReview";
-  }
-
-  const hasInProgressLabel = item.labels.some((label) => {
-    const normalized = label.trim().toLowerCase();
-    return ISSUE_IN_PROGRESS_LABELS.has(normalized) || normalized.startsWith(AGENT_IN_PROGRESS_LABEL_PREFIX);
-  });
-  if (hasInProgressLabel || item.assignees.length > 0) {
-    return "inProgress";
-  }
-
-  return "todo";
-};
-
 const formatIssueCountLabel = (assigneeCount: number) => {
   if (assigneeCount === 1) {
     return "1 assignee";
   }
 
   return `${assigneeCount} assignees`;
-};
-
-type IssueBodyBlock =
-  | {
-      kind: "paragraph";
-      text: string;
-    }
-  | {
-      kind: "code";
-      language: string | null;
-      code: string;
-    };
-
-type IssueBodyInlineToken =
-  | {
-      kind: "text";
-      value: string;
-    }
-  | {
-      kind: "inlineCode";
-      value: string;
-    };
-
-const escapeHtml = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-
-const parseIssueBody = (input: string): IssueBodyBlock[] => {
-  const normalizedInput = input.replaceAll(/\r\n?/g, "\n");
-  const blocks: IssueBodyBlock[] = [];
-  const paragraphLines: string[] = [];
-  let codeLines: string[] = [];
-  let isInCodeBlock = false;
-  let activeCodeLanguage: string | null = null;
-
-  const flushParagraph = () => {
-    const paragraphText = paragraphLines.join("\n").trim();
-    paragraphLines.length = 0;
-    if (paragraphText.length > 0) {
-      blocks.push({
-        kind: "paragraph",
-        text: paragraphText,
-      });
-    }
-  };
-
-  const flushCodeBlock = () => {
-    blocks.push({
-      kind: "code",
-      language: activeCodeLanguage,
-      code: codeLines.join("\n"),
-    });
-    codeLines = [];
-    activeCodeLanguage = null;
-  };
-
-  for (const line of normalizedInput.split("\n")) {
-    const fenceMatch = line.match(/^```([\w#+.-]*)\s*$/);
-    if (fenceMatch) {
-      if (isInCodeBlock) {
-        flushCodeBlock();
-        isInCodeBlock = false;
-      } else {
-        flushParagraph();
-        isInCodeBlock = true;
-        activeCodeLanguage = fenceMatch[1] ? fenceMatch[1] : null;
-      }
-      continue;
-    }
-
-    if (isInCodeBlock) {
-      codeLines.push(line);
-      continue;
-    }
-
-    if (line.trim().length === 0) {
-      flushParagraph();
-      continue;
-    }
-
-    paragraphLines.push(line);
-  }
-
-  if (isInCodeBlock) {
-    flushCodeBlock();
-  } else {
-    flushParagraph();
-  }
-
-  return blocks;
-};
-
-const parseIssueInlineTokens = (text: string): IssueBodyInlineToken[] => {
-  const tokens: IssueBodyInlineToken[] = [];
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const inlineCodeStart = text.indexOf("`", cursor);
-    if (inlineCodeStart < 0) {
-      tokens.push({
-        kind: "text",
-        value: text.slice(cursor),
-      });
-      break;
-    }
-
-    const inlineCodeEnd = text.indexOf("`", inlineCodeStart + 1);
-    if (inlineCodeEnd < 0) {
-      tokens.push({
-        kind: "text",
-        value: text.slice(cursor),
-      });
-      break;
-    }
-
-    if (inlineCodeStart > cursor) {
-      tokens.push({
-        kind: "text",
-        value: text.slice(cursor, inlineCodeStart),
-      });
-    }
-
-    const inlineCodeValue = text.slice(inlineCodeStart + 1, inlineCodeEnd);
-    if (inlineCodeValue.length === 0) {
-      tokens.push({
-        kind: "text",
-        value: "``",
-      });
-    } else {
-      tokens.push({
-        kind: "inlineCode",
-        value: inlineCodeValue,
-      });
-    }
-
-    cursor = inlineCodeEnd + 1;
-  }
-
-  return tokens.length > 0
-    ? tokens
-    : [
-        {
-          kind: "text",
-          value: text,
-        },
-      ];
-};
-
-const highlightIssueCode = (code: string, language: string | null) => {
-  const normalizedLanguage = language?.trim().toLowerCase() ?? "";
-  if (normalizedLanguage.length > 0 && hljs.getLanguage(normalizedLanguage)) {
-    try {
-      return hljs.highlight(code, {
-        language: normalizedLanguage,
-        ignoreIllegals: true,
-      }).value;
-    } catch {
-      // Ignore and continue with fallback highlighting.
-    }
-  }
-
-  try {
-    return hljs.highlightAuto(code).value;
-  } catch {
-    return escapeHtml(code);
-  }
 };
 
 const createDefaultVisibleCardCountByColumn = (): Record<KanbanColumnKey, number> => ({
