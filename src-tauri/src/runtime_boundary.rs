@@ -136,6 +136,7 @@ impl RuntimeBoundaryState {
         repository_state.queued_runs.remove(position).is_some()
     }
 
+    #[cfg(test)]
     pub fn repository_queue(&self, repository_key: &str) -> Option<&RepositoryRuntimeQueue> {
         self.repos.get(repository_key)
     }

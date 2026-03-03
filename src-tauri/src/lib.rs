@@ -7,6 +7,7 @@ mod window;
 
 use db::{app_db_path, with_connection, DbPath};
 use github_auth::GithubAuthState;
+use runtime_boundary::RuntimeBoundarySharedState;
 use tauri::{Manager, WindowEvent};
 use window::{app_window_state_path, persist_window_state, restore_window_state};
 
@@ -18,6 +19,7 @@ pub fn run() {
             with_connection(&db_path, |_| Ok(())).map_err(std::io::Error::other)?;
             app.manage(DbPath(db_path));
             app.manage(GithubAuthState::default());
+            app.manage(RuntimeBoundarySharedState::default());
 
             let window_state_path = app_window_state_path(app.handle())?;
             if let Some(main_window) = app.get_webview_window("main") {
@@ -54,6 +56,8 @@ pub fn run() {
             github_auth::github_list_repository_items,
             github_intake::github_attempt_issue_intake,
             github_intake::github_revert_issue_intake,
+            runtime_boundary::runtime_enqueue_issue_run,
+            runtime_boundary::runtime_dequeue_issue_run,
             github_auth::github_auth_start,
             github_auth::github_auth_poll,
             github_auth::github_auth_logout,
