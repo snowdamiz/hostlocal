@@ -2,16 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   GithubIssueIntakeOutcome,
   GithubRepositoryItem,
+  RuntimeIssueRunTelemetry,
   RuntimeRepositoryRunSnapshot,
+  RuntimeRunTelemetryEventPayload,
   RuntimeRunStageChangedEventPayload,
   RuntimeDequeueIssueRunOutcome,
   RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
 import {
   mapRuntimeSnapshotByIssueNumber,
+  mapRuntimeTelemetryByIssueNumber,
+  mergeRuntimeTelemetryPayloadByIssueNumber,
   mergeRuntimeStageChangedPayload,
   revertIssueIntakeWithRuntimeDequeue,
   startAgentRunForIssue,
+  subscribeRuntimeTelemetryEvents,
   subscribeRuntimeStageChangedEvents,
 } from "./useBoardInteractions";
 
@@ -101,6 +106,52 @@ const createRuntimeStagePayload = (
   reasonCode: null,
   fixHint: null,
   ...overrides,
+});
+
+const createRuntimeTelemetryPayload = (
+  overrides: Partial<RuntimeRunTelemetryEventPayload> = {},
+): RuntimeRunTelemetryEventPayload => ({
+  eventId: 200,
+  runId: 101,
+  repositoryFullName: "Owner/Repo",
+  repositoryKey: "owner/repo",
+  issueNumber: 42,
+  issueTitle: "Telemetry issue",
+  issueBranchName: "hostlocal/issue-42",
+  sequence: 2,
+  kind: "milestone",
+  stage: "coding",
+  message: "Generated patch for sidebar feed.",
+  redactionReasons: [],
+  includeInSummary: true,
+  createdAt: "2026-03-03T05:02:00.000Z",
+  ...overrides,
+});
+
+const createRuntimeTelemetryReplay = (): RuntimeIssueRunTelemetry => ({
+  repositoryFullName: "Owner/Repo",
+  repositoryKey: "owner/repo",
+  issueNumber: 42,
+  runId: 101,
+  events: [
+    createRuntimeTelemetryPayload({
+      eventId: 1001,
+      sequence: 1,
+      message: "Queued issue run.",
+    }),
+    createRuntimeTelemetryPayload({
+      eventId: 1003,
+      sequence: 3,
+      message: "Published run evidence.",
+      stage: "publishing",
+    }),
+    createRuntimeTelemetryPayload({
+      eventId: 1002,
+      sequence: 2,
+      message: "Prepared workspace.",
+      stage: "preparing",
+    }),
+  ],
 });
 
 describe("startAgentRunForIssue", () => {
@@ -333,6 +384,69 @@ describe("runtime metadata helpers", () => {
         repositoryFullName: "Owner/Repo",
         issueNumber: 41,
         stage: "coding",
+      }),
+    );
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runtime telemetry helpers", () => {
+  it("maps issue telemetry replay as newest-first by sequence", () => {
+    const mapped = mapRuntimeTelemetryByIssueNumber(createRuntimeTelemetryReplay());
+
+    expect(Object.keys(mapped)).toEqual(["42"]);
+    expect(mapped[42]?.map((event) => event.sequence)).toEqual([3, 2, 1]);
+    expect(mapped[42]?.[0]?.message).toBe("Published run evidence.");
+  });
+
+  it("merges telemetry payloads by issue with dedupe and newest-first ordering", () => {
+    const replay = createRuntimeTelemetryReplay();
+    const current = mapRuntimeTelemetryByIssueNumber(replay);
+
+    const merged = mergeRuntimeTelemetryPayloadByIssueNumber(
+      current,
+      createRuntimeTelemetryPayload({
+        eventId: 1002,
+        sequence: 4,
+        message: "Prepared workspace v2.",
+      }),
+    );
+
+    expect(merged[42]?.map((event) => event.sequence)).toEqual([4, 3, 1]);
+    expect(merged[42]?.find((event) => event.eventId === 1002)?.message).toBe("Prepared workspace v2.");
+  });
+
+  it("subscribes to runtime telemetry events and filters non-selected repositories", async () => {
+    const unlisten = vi.fn();
+    let handler: ((event: { payload: RuntimeRunTelemetryEventPayload }) => void) | null = null;
+    const listen = vi.fn().mockImplementation(async (_eventName, callback) => {
+      handler = callback;
+      return unlisten;
+    });
+    const onPayload = vi.fn();
+
+    const stop = await subscribeRuntimeTelemetryEvents("Owner/Repo", onPayload, { listen });
+    handler?.({
+      payload: createRuntimeTelemetryPayload({
+        issueNumber: 42,
+        message: "Coding milestone reached.",
+      }),
+    });
+    handler?.({
+      payload: createRuntimeTelemetryPayload({
+        repositoryFullName: "Else/Repo",
+        repositoryKey: "else/repo",
+        issueNumber: 99,
+      }),
+    });
+    stop();
+
+    expect(listen).toHaveBeenCalledWith("runtime/run-telemetry", expect.any(Function));
+    expect(onPayload).toHaveBeenCalledTimes(1);
+    expect(onPayload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: "Owner/Repo",
+        issueNumber: 42,
       }),
     );
     expect(unlisten).toHaveBeenCalledTimes(1);
