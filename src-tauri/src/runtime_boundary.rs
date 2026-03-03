@@ -2675,6 +2675,76 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_redacts_sensitive_telemetry_fragments() {
+        let raw = "Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz1234567890 \
+COOKIE: sessionid=sensitive-session-value \
+GITHUB_TOKEN=ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 \
+https://example.com/callback?access_token=my-token-value";
+        let result = redact_sensitive_text(raw);
+
+        assert!(
+            !result.masked_text.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+            "authorization bearer value should never survive redaction"
+        );
+        assert!(
+            !result.masked_text.contains("sessionid=sensitive-session-value"),
+            "cookie/session fragment should never survive redaction"
+        );
+        assert!(
+            !result
+                .masked_text
+                .contains("ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"),
+            "credential-like env assignment should be redacted"
+        );
+        assert!(
+            !result.masked_text.contains("access_token=my-token-value"),
+            "sensitive query parameters should be redacted"
+        );
+        assert!(
+            result.masked_text.contains("[REDACTED]"),
+            "sanitized output should contain inline redaction markers"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_redaction_returns_structured_reason_metadata() {
+        let raw = "Authorization: Bearer github_pat_1234567890abcdefghijklmnopqrstuvwxyz";
+        let result = redact_sensitive_text(raw);
+
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.reason_code == "authorization_header"),
+            "redaction metadata should identify matched reason categories"
+        );
+        assert!(
+            result.total_redactions >= 1,
+            "metadata should track non-zero redaction counts"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_redacts_uncertain_but_risky_fragments() {
+        let risky = "job output token candidate: A1B2C3D4E5F6G7H8J9K0L1M2N3P4Q5R6";
+        let result = redact_sensitive_text(risky);
+
+        assert!(
+            !result
+                .masked_text
+                .contains("A1B2C3D4E5F6G7H8J9K0L1M2N3P4Q5R6"),
+            "high-risk fragment should be conservatively redacted"
+        );
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.reason_code == "risky_fragment"),
+            "metadata should explain conservative risky-fragment masking"
+        );
+    }
+
+    #[test]
     fn runtime_boundary_normalizes_repository_keys_table() {
         let cases = [
             NormalizeRepositoryCase {
