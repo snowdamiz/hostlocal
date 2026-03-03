@@ -21,6 +21,8 @@ pub fn run() {
             app.manage(DbPath(db_path));
             app.manage(GithubAuthState::default());
             app.manage(RuntimeBoundarySharedState::default());
+            runtime_boundary::reconcile_runtime_state_on_startup(app.handle())
+                .map_err(std::io::Error::other)?;
 
             let window_state_path = app_window_state_path(app.handle())?;
             if let Some(main_window) = app.get_webview_window("main") {

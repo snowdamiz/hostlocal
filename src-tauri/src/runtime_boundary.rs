@@ -244,6 +244,27 @@ impl RuntimeBoundaryState {
         next_run
     }
 
+    pub fn restore_queued_runs_and_collect_active(
+        &mut self,
+        queued_runs: Vec<RuntimeIssueRun>,
+    ) -> Vec<RuntimeIssueRun> {
+        self.repos.clear();
+        let mut active_runs = Vec::new();
+
+        for queued_run in queued_runs {
+            let repository_state = self.repos.entry(queued_run.repository_key.clone()).or_default();
+            if repository_state.active_run.is_none() {
+                repository_state.active_run = Some(queued_run.clone());
+                active_runs.push(queued_run);
+                continue;
+            }
+
+            repository_state.queued_runs.push_back(queued_run);
+        }
+
+        active_runs
+    }
+
     #[cfg(test)]
     pub fn repository_queue(&self, repository_key: &str) -> Option<&RepositoryRuntimeQueue> {
         self.repos.get(repository_key)
@@ -610,6 +631,17 @@ fn read_runtime_persisted_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<Runti
     })
 }
 
+fn persisted_run_to_runtime_issue_run(persisted: RuntimePersistedRun) -> RuntimeIssueRun {
+    RuntimeIssueRun {
+        run_id: Some(persisted.run_id),
+        repository_full_name: persisted.repository_full_name,
+        repository_key: persisted.repository_key,
+        issue_number: persisted.issue_number,
+        issue_title: persisted.issue_title,
+        issue_branch_name: persisted.issue_branch_name,
+    }
+}
+
 fn read_runtime_persisted_transition(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<RuntimePersistedTransition> {
@@ -660,6 +692,61 @@ fn load_runtime_run_by_id(conn: &Connection, run_id: i64) -> rusqlite::Result<Ru
         params![run_id],
         read_runtime_persisted_run,
     )
+}
+
+fn load_non_terminal_runtime_runs_ordered(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<RuntimePersistedRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            run_id,
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at,
+            updated_at,
+            terminal_at
+         FROM runtime_runs
+         WHERE terminal_status IS NULL
+         ORDER BY repository_key ASC, queue_order ASC, run_id ASC",
+    )?;
+    let rows = stmt.query_map([], read_runtime_persisted_run)?;
+    rows.collect()
+}
+
+fn load_recoverable_queued_runtime_runs_ordered(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<RuntimePersistedRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            run_id,
+            repository_key,
+            repository_full_name,
+            issue_number,
+            issue_title,
+            issue_branch_name,
+            queue_order,
+            stage,
+            terminal_status,
+            reason_code,
+            fix_hint,
+            created_at,
+            updated_at,
+            terminal_at
+         FROM runtime_runs
+         WHERE terminal_status IS NULL
+           AND stage = ?1
+         ORDER BY repository_key ASC, queue_order ASC, run_id ASC",
+    )?;
+    let rows = stmt.query_map([RuntimeRunStage::Queued.as_str()], read_runtime_persisted_run)?;
+    rows.collect()
 }
 
 fn load_runtime_run_transitions_newest_first(
@@ -987,9 +1074,64 @@ fn persist_advance_runtime_run_to_publishing(
 }
 
 fn reconcile_runtime_state_on_startup_inner(
-    _conn: &Connection,
+    conn: &Connection,
 ) -> Result<Vec<RuntimeIssueRun>, String> {
-    Ok(Vec::new())
+    let non_terminal_runs = load_non_terminal_runtime_runs_ordered(conn).map_err(|e| e.to_string())?;
+    for persisted in &non_terminal_runs {
+        if persisted.stage == RuntimeRunStage::Queued {
+            continue;
+        }
+
+        transition_run_stage(
+            conn,
+            persisted.run_id,
+            persisted.stage,
+            None,
+            Some(RuntimeTerminalStatus::Failed),
+            Some(RUNTIME_RECOVERY_REASON_CODE),
+            Some(RUNTIME_RECOVERY_FIX_HINT),
+        )?;
+    }
+
+    let recoverable_runs = load_recoverable_queued_runtime_runs_ordered(conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(persisted_run_to_runtime_issue_run)
+        .collect();
+    Ok(recoverable_runs)
+}
+
+pub fn reconcile_runtime_state_on_startup(app: &AppHandle) -> Result<(), String> {
+    let db_path = app.state::<DbPath>();
+    let recoverable_runs = with_connection(&db_path.0, |conn| {
+        reconcile_runtime_state_on_startup_inner(conn).map_err(runtime_invariant_error)
+    })?;
+
+    let active_runs = {
+        let state = app.state::<RuntimeBoundarySharedState>();
+        let mut queue = state.lock()?;
+        queue.restore_queued_runs_and_collect_active(recoverable_runs)
+    };
+
+    for run in active_runs {
+        if let Err(start_error) = start_run_worker(app, run.clone()) {
+            let terminal_status = if start_error.outcome.status == "blocked" {
+                RuntimeTerminalStatus::GuardrailBlocked
+            } else {
+                RuntimeTerminalStatus::Failed
+            };
+            finalize_run(
+                app,
+                run,
+                start_error.workspace_root,
+                terminal_status,
+                start_error.outcome.reason_code.clone(),
+                start_error.outcome.fix_hint.clone(),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn runtime_transition_failed_outcome() -> RuntimeQueueOutcome {
