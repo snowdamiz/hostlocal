@@ -4,10 +4,12 @@ import {
   githubListRepositoryItems,
   githubOpenItemUrl,
   githubRevertIssueIntake,
+  runtimeEnqueueIssueRun,
   type GithubIssueIntakeOutcome,
   type GithubRepository,
   type GithubRepositoryItem,
   type GithubUser,
+  type RuntimeEnqueueIssueRunOutcome,
 } from "../../../lib/commands";
 import { beginIntakeAttempt, clearIntakeAttempts, createIntakeAttemptState, resolveIntakeAttempt } from "../../../intake/intake-state";
 import { pushIntakeRejectionToast } from "../../../intake/toast-store";
@@ -69,6 +71,66 @@ const formatInvokeError = (error: unknown, fallback: string) => {
 
   return fallback;
 };
+
+export interface StartAgentRunForIssueInput {
+  repositoryFullName: string;
+  item: GithubRepositoryItem;
+  agentLabel: string;
+  emitIntakeRejection: (outcome: GithubIssueIntakeOutcome) => void;
+}
+
+export interface StartAgentRunForIssueDependencies {
+  runtimeEnqueueIssueRun: typeof runtimeEnqueueIssueRun;
+  githubRevertIssueIntake: typeof githubRevertIssueIntake;
+}
+
+const startAgentRunForIssueDependencies: StartAgentRunForIssueDependencies = {
+  runtimeEnqueueIssueRun,
+  githubRevertIssueIntake,
+};
+
+const toRuntimeRejectionOutcome = (outcome: RuntimeEnqueueIssueRunOutcome): GithubIssueIntakeOutcome => ({
+  accepted: false,
+  reasonCode: outcome.reasonCode ?? "runtime_startup_failed",
+  fixHint: outcome.fixHint ?? "Runtime startup failed before local worker execution could begin.",
+});
+
+export async function startAgentRunForIssue(
+  input: StartAgentRunForIssueInput,
+  dependencies: StartAgentRunForIssueDependencies = startAgentRunForIssueDependencies,
+) {
+  const runtimeOutcome = await dependencies.runtimeEnqueueIssueRun({
+    repositoryFullName: input.repositoryFullName,
+    issueNumber: input.item.number,
+    issueTitle: input.item.title,
+  });
+
+  if (runtimeOutcome.status === "started" || runtimeOutcome.status === "queued") {
+    return;
+  }
+
+  input.emitIntakeRejection(toRuntimeRejectionOutcome(runtimeOutcome));
+
+  try {
+    const revertOutcome = await dependencies.githubRevertIssueIntake({
+      repositoryFullName: input.repositoryFullName,
+      issueNumber: input.item.number,
+      agentLabel: input.agentLabel,
+    });
+    if (!revertOutcome.accepted) {
+      input.emitIntakeRejection(revertOutcome);
+    }
+  } catch (error) {
+    input.emitIntakeRejection({
+      accepted: false,
+      reasonCode: "label_persist_failed",
+      fixHint: formatInvokeError(
+        error,
+        "Intake reversion failed after runtime rejection. Retry when GitHub is reachable.",
+      ),
+    });
+  }
+}
 
 export function useBoardInteractions(
   githubUser: Accessor<GithubUser | null>,
@@ -287,11 +349,6 @@ export function useBoardInteractions(
     });
   };
 
-  const startAgentRunForIssue = async (item: GithubRepositoryItem) => {
-    // Phase 2 boundary for Phase 3 integration: accepted intake starts the run boundary.
-    console.info(`[intake] start run boundary for issue #${item.number}`);
-  };
-
   const emitIntakeRejection = (outcome: GithubIssueIntakeOutcome) => {
     pushIntakeRejectionToast(outcome.reasonCode, outcome.fixHint);
   };
@@ -415,7 +472,12 @@ export function useBoardInteractions(
       void (async () => {
         try {
           if (isTodoToInProgress) {
-            await startAgentRunForIssue(item);
+            await startAgentRunForIssue({
+              repositoryFullName: repository.fullName,
+              item,
+              agentLabel: DEFAULT_AGENT_LABEL,
+              emitIntakeRejection,
+            });
           }
         } finally {
           await loadRepositoryItems(repository.fullName, {
