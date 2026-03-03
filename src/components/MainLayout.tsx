@@ -13,6 +13,7 @@ import { pushIntakeRejectionToast } from "../intake/toast-store";
 import { AGENT_IN_PROGRESS_LABEL_PREFIX, inferDefaultColumn } from "../features/board/column-inference";
 import { highlightIssueCode, parseIssueBody, parseIssueInlineTokens } from "../features/issue-content/issue-body";
 import { useGithubAuth } from "../features/auth/hooks/useGithubAuth";
+import { GithubAuthPanel } from "../features/auth/components/GithubAuthPanel";
 import { useRepositories } from "../features/repositories/hooks/useRepositories";
 import { RepositorySidebar } from "../features/repositories/components/RepositorySidebar";
 
@@ -993,86 +994,20 @@ export function MainLayout() {
           selectedRepositoryId={selectedRepositoryId}
           onSelectRepository={(repositoryId) => setSelectedRepositoryId(repositoryId)}
         />
-
-        <div class="sidebar-footer">
-          <Show when={authError()}>
-            {(error) => (
-              <p class="sidebar-auth-error" role="alert">
-                {error()}
-              </p>
-            )}
-          </Show>
-
-          <Show when={deviceFlow()}>
-            {(flow) => (
-              <div class="sidebar-device-flow">
-                <p class="sidebar-device-title">Confirm on GitHub</p>
-                <button
-                  type="button"
-                  class="sidebar-device-link"
-                  onClick={() => void openVerificationPage()}
-                >
-                  Open verification page
-                </button>
-                <button type="button" class="sidebar-device-code" onClick={() => void copyUserCode()}>
-                  <span>{flow().userCode}</span>
-                  <span>{isCodeCopied() ? "Copied" : "Copy"}</span>
-                </button>
-                <p class="sidebar-device-hint">
-                  {isPollingAuth() ? "Checking authorization..." : "Waiting for approval..."}
-                </p>
-              </div>
-            )}
-          </Show>
-
-          <Show
-            when={githubUser()}
-            fallback={
-              <button
-                type="button"
-                class="sidebar-connect-link"
-                onClick={() => void connectGithub()}
-                disabled={isAuthChecking() || isAuthStarting()}
-              >
-                {isAuthStarting() ? "Connecting..." : "Connect GitHub"}
-              </button>
-            }
-          >
-            {(user) => (
-              <div class="sidebar-github-user">
-                <img
-                  class="sidebar-github-avatar"
-                  src={user().avatarUrl}
-                  alt={`${user().login} profile`}
-                  loading="lazy"
-                />
-                <a
-                  class="sidebar-github-login"
-                  href={user().htmlUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={user().login}
-                >
-                  {user().login}
-                </a>
-                <button
-                  type="button"
-                  class="sidebar-signout-btn"
-                  onClick={() => void signOutGithub()}
-                  aria-label="Sign out of GitHub"
-                  title="Sign out"
-                  disabled={isSigningOut()}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M14 7V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3" />
-                    <path d="M10 12h10" />
-                    <path d="m17 8 4 4-4 4" />
-                  </svg>
-                </button>
-              </div>
-            )}
-          </Show>
-        </div>
+        <GithubAuthPanel
+          authError={authError}
+          deviceFlow={deviceFlow}
+          isPollingAuth={isPollingAuth}
+          isCodeCopied={isCodeCopied}
+          githubUser={githubUser}
+          isAuthChecking={isAuthChecking}
+          isAuthStarting={isAuthStarting}
+          isSigningOut={isSigningOut}
+          onOpenVerificationPage={openVerificationPage}
+          onCopyUserCode={copyUserCode}
+          onConnectGithub={connectGithub}
+          onSignOutGithub={signOutGithub}
+        />
       </aside>
 
       <section class="content">
