@@ -1,11 +1,12 @@
 use crate::db::{with_connection, DbPath};
+use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
@@ -19,6 +20,141 @@ const RUNTIME_RUN_STAGE_CHANGED_EVENT: &str = "runtime/run-stage-changed";
 const RUNTIME_RECOVERY_REASON_CODE: &str = "runtime_recovery_process_lost";
 const RUNTIME_RECOVERY_FIX_HINT: &str =
     "A previous HostLocal session ended during execution. Requeue the issue to run again.";
+const REDACTION_MARKER: &str = "[REDACTED]";
+
+#[derive(Debug)]
+struct RuntimeTelemetryRedactionRule {
+    reason_code: &'static str,
+    pattern: Regex,
+    replacement: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeTelemetryRedactionReason {
+    reason_code: String,
+    match_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeTelemetryRedactionResult {
+    masked_text: String,
+    reasons: Vec<RuntimeTelemetryRedactionReason>,
+    total_redactions: usize,
+}
+
+fn runtime_telemetry_redaction_rules() -> &'static [RuntimeTelemetryRedactionRule] {
+    static RULES: OnceLock<Vec<RuntimeTelemetryRedactionRule>> = OnceLock::new();
+    RULES
+        .get_or_init(|| {
+            vec![
+                RuntimeTelemetryRedactionRule {
+                    reason_code: "authorization_header",
+                    pattern: Regex::new(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+")
+                        .expect("valid authorization redaction regex"),
+                    replacement: "${1}[REDACTED]",
+                },
+                RuntimeTelemetryRedactionRule {
+                    reason_code: "credential_assignment",
+                    pattern: Regex::new(
+                        r#"(?i)\b([A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD|SESSION|COOKIE|CREDENTIALS)[A-Z0-9_]*\s*=\s*)("[^"]*"|'[^']*'|[^\s]+)"#,
+                    )
+                    .expect("valid credential assignment redaction regex"),
+                    replacement: "${1}[REDACTED]",
+                },
+                RuntimeTelemetryRedactionRule {
+                    reason_code: "sensitive_key_value",
+                    pattern: Regex::new(
+                        r#"(?i)\b((?:api[_-]?key|token|secret|password|session(?:id)?|cookie)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)"#,
+                    )
+                    .expect("valid sensitive key value redaction regex"),
+                    replacement: "${1}[REDACTED]",
+                },
+                RuntimeTelemetryRedactionRule {
+                    reason_code: "sensitive_query_parameter",
+                    pattern: Regex::new(
+                        r"(?i)((?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|password|session(?:id)?)=)[^&\s]+",
+                    )
+                    .expect("valid sensitive query parameter redaction regex"),
+                    replacement: "${1}[REDACTED]",
+                },
+                RuntimeTelemetryRedactionRule {
+                    reason_code: "known_token_prefix",
+                    pattern: Regex::new(
+                        r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AKIA[0-9A-Z]{16})\b",
+                    )
+                    .expect("valid known token prefix redaction regex"),
+                    replacement: REDACTION_MARKER,
+                },
+            ]
+        })
+        .as_slice()
+}
+
+fn runtime_telemetry_risky_fragment_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"\b[A-Za-z0-9_-]{32,}\b").expect("valid risky fragment redaction regex")
+    })
+}
+
+fn redact_risky_fragments(value: &str) -> (String, usize) {
+    let mut masked = String::with_capacity(value.len());
+    let mut cursor = 0;
+    let mut redaction_count = 0;
+    for fragment in runtime_telemetry_risky_fragment_pattern().find_iter(value) {
+        masked.push_str(&value[cursor..fragment.start()]);
+        let candidate = fragment.as_str();
+        let has_letter = candidate.chars().any(|ch| ch.is_ascii_alphabetic());
+        let has_digit = candidate.chars().any(|ch| ch.is_ascii_digit());
+        if has_letter && has_digit {
+            masked.push_str(REDACTION_MARKER);
+            redaction_count += 1;
+        } else {
+            masked.push_str(candidate);
+        }
+        cursor = fragment.end();
+    }
+    masked.push_str(&value[cursor..]);
+    (masked, redaction_count)
+}
+
+fn redact_sensitive_text(value: &str) -> RuntimeTelemetryRedactionResult {
+    let mut masked_text = value.to_string();
+    let mut reasons = Vec::new();
+
+    for rule in runtime_telemetry_redaction_rules() {
+        let match_count = rule.pattern.find_iter(&masked_text).count();
+        if match_count == 0 {
+            continue;
+        }
+        masked_text = rule
+            .pattern
+            .replace_all(&masked_text, rule.replacement)
+            .to_string();
+        reasons.push(RuntimeTelemetryRedactionReason {
+            reason_code: rule.reason_code.to_string(),
+            match_count,
+        });
+    }
+
+    let (masked_for_risky_fragments, risky_fragment_matches) = redact_risky_fragments(&masked_text);
+    masked_text = masked_for_risky_fragments;
+    if risky_fragment_matches > 0 {
+        reasons.push(RuntimeTelemetryRedactionReason {
+            reason_code: "risky_fragment".to_string(),
+            match_count: risky_fragment_matches,
+        });
+    }
+
+    let total_redactions = reasons.iter().map(|reason| reason.match_count).sum();
+    RuntimeTelemetryRedactionResult {
+        masked_text,
+        reasons,
+        total_redactions,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

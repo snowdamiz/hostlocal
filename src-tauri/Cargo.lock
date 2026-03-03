@@ -1534,6 +1534,7 @@ name = "hostlocal"
 version = "0.1.0"
 dependencies = [
  "keyring",
+ "regex",
  "reqwest 0.12.28",
  "rfd",
  "rusqlite",
