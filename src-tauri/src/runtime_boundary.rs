@@ -15,6 +15,7 @@ const BRANCH_PREFIX: &str = "hostlocal";
 const SIDECAR_ALIAS: &str = "hostlocal-worker";
 const WORKSPACE_REPO_DIR: &str = "repo";
 const RUNTIME_EVIDENCE_DIR: &str = "hostlocal-runtime-evidence";
+const RUNTIME_RUN_STAGE_CHANGED_EVENT: &str = "runtime/run-stage-changed";
 const RUNTIME_RECOVERY_REASON_CODE: &str = "runtime_recovery_process_lost";
 const RUNTIME_RECOVERY_FIX_HINT: &str =
     "A previous HostLocal session ended during execution. Requeue the issue to run again.";
@@ -1201,6 +1202,41 @@ pub struct RuntimeIssueRunHistory {
 pub struct RuntimeIssueRunHistoryRequest {
     pub repository_full_name: String,
     pub issue_number: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRunStageChangedEventPayload {
+    pub run_id: i64,
+    pub repository_full_name: String,
+    pub repository_key: String,
+    pub issue_number: i64,
+    pub issue_title: String,
+    pub issue_branch_name: String,
+    pub stage: String,
+    pub queue_position: Option<usize>,
+    pub terminal_status: Option<String>,
+    pub reason_code: Option<String>,
+    pub fix_hint: Option<String>,
+}
+
+fn runtime_stage_changed_event_payload_inner(
+    _conn: &Connection,
+    run_id: i64,
+) -> Result<RuntimeRunStageChangedEventPayload, String> {
+    Ok(RuntimeRunStageChangedEventPayload {
+        run_id,
+        repository_full_name: String::new(),
+        repository_key: String::new(),
+        issue_number: 0,
+        issue_title: String::new(),
+        issue_branch_name: String::new(),
+        stage: "queued".to_string(),
+        queue_position: None,
+        terminal_status: None,
+        reason_code: None,
+        fix_hint: None,
+    })
 }
 
 fn runtime_get_repository_run_snapshot_inner(
@@ -2495,6 +2531,52 @@ mod tests {
         assert_eq!(
             newest_run.transitions[0].terminal_status.as_deref(),
             Some("failed")
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_stage_event_payload_includes_repository_stage_and_queue_position() {
+        let conn = runtime_schema_test_connection();
+        let first = build_run("owner/repo", 4501, "First queued");
+        let second = build_run("owner/repo", 4502, "Second queued");
+
+        let _first_persisted = insert_runtime_run(&conn, &first).expect("persist first run");
+        let second_persisted = insert_runtime_run(&conn, &second).expect("persist second run");
+
+        let payload = runtime_stage_changed_event_payload_inner(&conn, second_persisted.run_id)
+            .expect("build stage event payload");
+        assert_eq!(payload.repository_key, "owner/repo");
+        assert_eq!(payload.issue_number, 4502);
+        assert_eq!(payload.stage, "queued");
+        assert_eq!(payload.queue_position, Some(2));
+    }
+
+    #[test]
+    fn runtime_boundary_stage_event_payload_preserves_terminal_reason_and_fix_hint() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4503, "Terminal payload");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist run");
+        transition_run_stage(
+            &conn,
+            persisted.run_id,
+            RuntimeRunStage::Queued,
+            None,
+            Some(RuntimeTerminalStatus::Failed),
+            Some("runtime_event_terminal_failed"),
+            Some("Resolve failure and retry."),
+        )
+        .expect("finalize run");
+
+        let payload = runtime_stage_changed_event_payload_inner(&conn, persisted.run_id)
+            .expect("build stage event payload");
+        assert_eq!(payload.terminal_status.as_deref(), Some("failed"));
+        assert_eq!(
+            payload.reason_code.as_deref(),
+            Some("runtime_event_terminal_failed")
+        );
+        assert_eq!(
+            payload.fix_hint.as_deref(),
+            Some("Resolve failure and retry.")
         );
     }
 
