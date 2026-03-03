@@ -68,7 +68,12 @@ Plans:
   2. Each run gets a dedicated isolated workspace and branch for that issue.
   3. Workspace artifacts are cleaned automatically after completion or cancellation.
   4. Out-of-bound sidecar command/path attempts are blocked with an explicit failure outcome.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [x] 03-01-PLAN.md - Establish runtime queue/dequeue command boundary with deterministic repo/issue identity contracts. (completed 2026-03-03)
+- [ ] 03-02-PLAN.md - Implement sidecar-only execution, ephemeral workspace lifecycle, guardrails, and cleanup finalization.
+- [ ] 03-03-PLAN.md - Wire board runtime enqueue/dequeue integration with rejection-toast rollback behavior.
 
 ### Phase 4: Deterministic Run State Engine
 **Goal**: Run lifecycle stages are deterministic and persisted so app restarts reconcile correctly.
@@ -142,7 +147,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 1. Tailwind v4 Styling Foundation | 0/TBD | Not started | - |
 | 2. Policy-Gated Issue Intake | 3/3 | Complete | 2026-03-02 |
 | 02.1. Production Standards Refactor (INSERTED) | 6/6 | Complete    | 2026-03-03 |
-| 3. Local Worker Runtime Boundary | 0/TBD | Not started | - |
+| 3. Local Worker Runtime Boundary | 1/3 | In progress | 2026-03-03 |
 | 4. Deterministic Run State Engine | 0/TBD | Not started | - |
 | 5. Live Telemetry and Safe Summaries | 0/TBD | Not started | - |
 | 6. In-Run User Control | 0/TBD | Not started | - |

@@ -19,7 +19,7 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 ### Local Runtime
 
 - [ ] **RUN-01**: User run executes on the local machine through a Rust/Tauri sidecar path (no remote workers).
-- [ ] **RUN-02**: User run uses an isolated ephemeral workspace and branch for that issue.
+- [x] **RUN-02**: User run uses an isolated ephemeral workspace and branch for that issue.
 - [ ] **RUN-03**: Run workspace is cleaned up automatically after completion or cancellation.
 
 ### Orchestration
@@ -54,7 +54,7 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 ### Security
 
 - [ ] **SEC-01**: User tokens/secrets remain in OS secure storage and are never exposed in run logs or UI event streams.
-- [ ] **SEC-02**: Sidecar execution is restricted by explicit command/path permissions to the run workspace boundary.
+- [x] **SEC-02**: Sidecar execution is restricted by explicit command/path permissions to the run workspace boundary.
 
 ## v2 Requirements
 
@@ -90,7 +90,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTK-01 | Phase 2 | Complete |
 | INTK-02 | Phase 2 | Complete |
 | RUN-01 | Phase 3 | Pending |
-| RUN-02 | Phase 3 | Pending |
+| RUN-02 | Phase 3 | Complete |
 | RUN-03 | Phase 3 | Pending |
 | ORCH-01 | Phase 4 | Pending |
 | ORCH-02 | Phase 4 | Pending |
@@ -107,7 +107,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OBS-01 | Phase 5 | Pending |
 | OBS-02 | Phase 5 | Pending |
 | SEC-01 | Phase 5 | Pending |
-| SEC-02 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total
