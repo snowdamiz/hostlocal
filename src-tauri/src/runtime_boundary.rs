@@ -850,6 +850,76 @@ mod tests {
         conn
     }
 
+    fn runtime_insert_test_run(
+        conn: &Connection,
+        repository_key: &str,
+        repository_full_name: &str,
+        issue_number: i64,
+        issue_title: &str,
+        queue_order: i64,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO runtime_runs (
+                repository_key,
+                repository_full_name,
+                issue_number,
+                issue_title,
+                issue_branch_name,
+                queue_order,
+                stage
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                repository_key,
+                repository_full_name,
+                issue_number,
+                issue_title,
+                format!("hostlocal/issue-{issue_number}-test"),
+                queue_order,
+                "queued"
+            ],
+        )
+        .expect("insert runtime run");
+        let run_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO runtime_run_transitions (
+                run_id,
+                sequence,
+                stage
+            ) VALUES (?1, ?2, ?3)",
+            rusqlite::params![run_id, 1_i64, "queued"],
+        )
+        .expect("insert initial transition");
+
+        run_id
+    }
+
+    fn transition_run_stage_under_test(
+        _conn: &Connection,
+        _run_id: i64,
+        _expected_stage: &str,
+        _next_stage: &str,
+    ) -> Result<(), String> {
+        Err("not implemented".to_string())
+    }
+
+    fn run_stage_value(conn: &Connection, run_id: i64) -> String {
+        conn.query_row(
+            "SELECT stage FROM runtime_runs WHERE run_id = ?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .expect("fetch run stage")
+    }
+
+    fn transition_count(conn: &Connection, run_id: i64) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM runtime_run_transitions WHERE run_id = ?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .expect("count transitions")
+    }
+
     fn sqlite_object_exists(conn: &Connection, object_type: &str, name: &str) -> bool {
         conn.query_row(
             "SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2 LIMIT 1",
@@ -945,6 +1015,82 @@ mod tests {
         assert!(
             result.is_err(),
             "invalid terminal metadata values should be rejected"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_transition_guard_rejects_skips_and_backtracking() {
+        let conn = runtime_schema_test_connection();
+        let run_id = runtime_insert_test_run(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            211,
+            "Transition guard test",
+            0,
+        );
+
+        let skip = transition_run_stage_under_test(&conn, run_id, "queued", "coding");
+        assert!(
+            skip.is_err(),
+            "queued -> coding must be rejected as a skipped transition"
+        );
+
+        let accepted = transition_run_stage_under_test(&conn, run_id, "queued", "preparing");
+        assert!(accepted.is_ok(), "queued -> preparing should be accepted");
+
+        let backtrack = transition_run_stage_under_test(&conn, run_id, "preparing", "queued");
+        assert!(
+            backtrack.is_err(),
+            "preparing -> queued must be rejected as a backtrack"
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_transition_guard_updates_run_and_transition_log_atomically() {
+        let conn = runtime_schema_test_connection();
+        let run_id = runtime_insert_test_run(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            212,
+            "Atomic transition test",
+            1,
+        );
+        assert_eq!(run_stage_value(&conn, run_id), "queued");
+        assert_eq!(transition_count(&conn, run_id), 1);
+
+        let result = transition_run_stage_under_test(&conn, run_id, "queued", "preparing");
+        assert!(result.is_ok(), "queued -> preparing should succeed");
+        assert_eq!(run_stage_value(&conn, run_id), "preparing");
+        assert_eq!(transition_count(&conn, run_id), 2);
+    }
+
+    #[test]
+    fn runtime_boundary_transition_guard_rolls_back_on_expected_stage_mismatch() {
+        let conn = runtime_schema_test_connection();
+        let run_id = runtime_insert_test_run(
+            &conn,
+            "owner/repo",
+            "Owner/Repo",
+            213,
+            "Expected-stage mismatch test",
+            2,
+        );
+        assert_eq!(run_stage_value(&conn, run_id), "queued");
+        assert_eq!(transition_count(&conn, run_id), 1);
+
+        let mismatch = transition_run_stage_under_test(&conn, run_id, "preparing", "coding");
+        assert!(mismatch.is_err(), "mismatched expected stage should fail");
+        assert_eq!(
+            run_stage_value(&conn, run_id),
+            "queued",
+            "canonical run stage should remain unchanged after rollback"
+        );
+        assert_eq!(
+            transition_count(&conn, run_id),
+            1,
+            "transition count should remain unchanged after rollback"
         );
     }
 
