@@ -275,6 +275,61 @@ pub struct RuntimeDequeueIssueRunRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeControlIssueRunRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeAbortIssueRunRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSteerIssueRunRequest {
+    pub repository_full_name: String,
+    pub issue_number: i64,
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRunControlOutcome {
+    pub acknowledged: bool,
+    pub run_id: Option<i64>,
+    pub is_paused: Option<bool>,
+    pub reason_code: Option<String>,
+    pub fix_hint: Option<String>,
+}
+
+impl RuntimeRunControlOutcome {
+    fn acknowledged(run_id: i64, is_paused: Option<bool>) -> Self {
+        Self {
+            acknowledged: true,
+            run_id: Some(run_id),
+            is_paused,
+            reason_code: None,
+            fix_hint: None,
+        }
+    }
+
+    fn rejected(run_id: Option<i64>, reason_code: &str, fix_hint: &str) -> Self {
+        Self {
+            acknowledged: false,
+            run_id,
+            is_paused: None,
+            reason_code: Some(reason_code.to_string()),
+            fix_hint: Some(fix_hint.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeQueueOutcome {
     pub status: String,
     pub queue_position: Option<usize>,
@@ -1485,6 +1540,34 @@ fn resolve_runtime_run_id(conn: &Connection, run: &RuntimeIssueRun) -> Result<i6
         .ok_or_else(|| "missing persisted runtime run".to_string())
 }
 
+fn set_runtime_run_paused_state(
+    conn: &Connection,
+    run_id: i64,
+    is_paused: bool,
+) -> Result<RuntimePersistedRun, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let current = load_runtime_run_by_id(&tx, run_id).map_err(|e| e.to_string())?;
+    if current.terminal_status.is_some() {
+        return Err("runtime run already finalized".to_string());
+    }
+
+    tx.execute(
+        "UPDATE runtime_runs
+         SET is_paused = ?1,
+             paused_at = CASE
+                WHEN ?1 = 1 THEN COALESCE(paused_at, CURRENT_TIMESTAMP)
+                ELSE NULL
+             END,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE run_id = ?2",
+        params![if is_paused { 1_i64 } else { 0_i64 }, run_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    load_runtime_run_by_id(conn, run_id).map_err(|e| e.to_string())
+}
+
 fn transition_run_stage(
     conn: &Connection,
     run_id: i64,
@@ -1545,6 +1628,14 @@ fn transition_run_stage(
              terminal_status = ?2,
              reason_code = ?3,
              fix_hint = ?4,
+             is_paused = CASE
+                WHEN ?2 IS NULL THEN is_paused
+                ELSE 0
+             END,
+             paused_at = CASE
+                WHEN ?2 IS NULL THEN paused_at
+                ELSE NULL
+             END,
              updated_at = CURRENT_TIMESTAMP,
              terminal_at = CASE
                 WHEN ?2 IS NULL THEN terminal_at
@@ -1591,6 +1682,16 @@ fn transition_run_stage(
 fn persist_insert_runtime_run(db_path: &Path, run: &RuntimeIssueRun) -> Result<RuntimePersistedRun, String> {
     with_connection(db_path, |conn| {
         insert_runtime_run(conn, run).map_err(runtime_invariant_error)
+    })
+}
+
+fn persist_set_runtime_run_paused_state(
+    db_path: &Path,
+    run_id: i64,
+    is_paused: bool,
+) -> Result<RuntimePersistedRun, String> {
+    with_connection(db_path, |conn| {
+        set_runtime_run_paused_state(conn, run_id, is_paused).map_err(runtime_invariant_error)
     })
 }
 
@@ -2069,6 +2170,29 @@ fn record_runtime_telemetry_milestone(
         detail.stage,
         detail.message.as_str(),
         detail.include_in_summary,
+    );
+}
+
+fn record_runtime_control_telemetry(
+    app: &AppHandle,
+    run: &RuntimePersistedRun,
+    message: &str,
+) {
+    let runtime_run = RuntimeIssueRun {
+        run_id: Some(run.run_id),
+        repository_full_name: run.repository_full_name.clone(),
+        repository_key: run.repository_key.clone(),
+        issue_number: run.issue_number,
+        issue_title: run.issue_title.clone(),
+        issue_branch_name: run.issue_branch_name.clone(),
+    };
+    record_runtime_telemetry_event(
+        app,
+        &runtime_run,
+        "control",
+        run.stage.as_str(),
+        message,
+        true,
     );
 }
 
@@ -3114,6 +3238,353 @@ pub async fn runtime_dequeue_issue_run(
     );
 
     Ok(RuntimeQueueOutcome::removed())
+}
+
+fn normalize_runtime_control_identity(
+    repository_full_name: &str,
+    issue_number: i64,
+    invalid_fix_hint: &str,
+) -> Result<(String, String), RuntimeRunControlOutcome> {
+    let trimmed_full_name = repository_full_name.trim().to_string();
+    let Some(repository_key) = normalize_repository_key(trimmed_full_name.as_str()) else {
+        return Err(RuntimeRunControlOutcome::rejected(
+            None,
+            "invalid_runtime_request",
+            invalid_fix_hint,
+        ));
+    };
+    if issue_number <= 0 {
+        return Err(RuntimeRunControlOutcome::rejected(
+            None,
+            "invalid_runtime_request",
+            invalid_fix_hint,
+        ));
+    }
+    Ok((repository_key, trimmed_full_name))
+}
+
+fn load_runtime_control_run(
+    db_path: &Path,
+    repository_key: &str,
+    issue_number: i64,
+    not_found_fix_hint: &str,
+) -> Result<RuntimePersistedRun, RuntimeRunControlOutcome> {
+    let active_run = with_connection(db_path, |conn| {
+        load_active_runtime_run_by_issue(conn, repository_key, issue_number)
+    })
+    .map_err(|error| {
+        RuntimeRunControlOutcome::rejected(
+            None,
+            "runtime_control_lookup_failed",
+            format!("Runtime control lookup failed: {error}").as_str(),
+        )
+    })?;
+    active_run.ok_or_else(|| {
+        RuntimeRunControlOutcome::rejected(None, "runtime_run_not_found", not_found_fix_hint)
+    })
+}
+
+#[tauri::command]
+pub async fn runtime_pause_issue_run(
+    app: AppHandle,
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeControlIssueRunRequest,
+) -> Result<RuntimeRunControlOutcome, String> {
+    let (repository_key, _) = match normalize_runtime_control_identity(
+        request.repository_full_name.as_str(),
+        request.issue_number,
+        "Select a valid repository issue before pausing a run.",
+    ) {
+        Ok(identity) => identity,
+        Err(outcome) => return Ok(outcome),
+    };
+    let db_path = app.state::<DbPath>();
+    let run = match load_runtime_control_run(
+        &db_path.0,
+        repository_key.as_str(),
+        request.issue_number,
+        "No active runtime run was found for the selected issue.",
+    ) {
+        Ok(run) => run,
+        Err(outcome) => return Ok(outcome),
+    };
+    if run.stage == RuntimeRunStage::Queued {
+        record_runtime_control_telemetry(&app, &run, "Pause rejected because run is queued.");
+        return Ok(RuntimeRunControlOutcome::rejected(
+            Some(run.run_id),
+            "runtime_pause_not_active",
+            "Only active runs can be paused.",
+        ));
+    }
+    if run.is_paused {
+        record_runtime_control_telemetry(&app, &run, "Pause acknowledged; run already paused.");
+        return Ok(RuntimeRunControlOutcome::acknowledged(run.run_id, Some(true)));
+    }
+
+    {
+        let mut queue = state.lock()?;
+        if queue.set_active_run_paused(run.run_id, true).is_err() {
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_pause_not_active",
+                "Only active runs can be paused.",
+            ));
+        }
+    }
+
+    let paused = match persist_set_runtime_run_paused_state(&db_path.0, run.run_id, true) {
+        Ok(paused) => paused,
+        Err(error) => {
+            if let Ok(mut queue) = state.lock() {
+                let _ = queue.set_active_run_paused(run.run_id, false);
+            }
+            return Err(error);
+        }
+    };
+    emit_runtime_stage_changed_event_for_run(&app, paused.run_id);
+    record_runtime_control_telemetry(&app, &paused, "Run paused by user request.");
+
+    Ok(RuntimeRunControlOutcome::acknowledged(paused.run_id, Some(true)))
+}
+
+#[tauri::command]
+pub async fn runtime_resume_issue_run(
+    app: AppHandle,
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeControlIssueRunRequest,
+) -> Result<RuntimeRunControlOutcome, String> {
+    let (repository_key, _) = match normalize_runtime_control_identity(
+        request.repository_full_name.as_str(),
+        request.issue_number,
+        "Select a valid repository issue before resuming a run.",
+    ) {
+        Ok(identity) => identity,
+        Err(outcome) => return Ok(outcome),
+    };
+    let db_path = app.state::<DbPath>();
+    let run = match load_runtime_control_run(
+        &db_path.0,
+        repository_key.as_str(),
+        request.issue_number,
+        "No active runtime run was found for the selected issue.",
+    ) {
+        Ok(run) => run,
+        Err(outcome) => return Ok(outcome),
+    };
+    if run.stage == RuntimeRunStage::Queued {
+        record_runtime_control_telemetry(&app, &run, "Resume rejected because run is queued.");
+        return Ok(RuntimeRunControlOutcome::rejected(
+            Some(run.run_id),
+            "runtime_resume_not_active",
+            "Only active runs can be resumed.",
+        ));
+    }
+
+    let pending_terminal = {
+        let mut queue = state.lock()?;
+        let Some(is_paused) = queue.active_run_is_paused(run.run_id) else {
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_resume_not_active",
+                "Only active paused runs can be resumed.",
+            ));
+        };
+        if !is_paused && !run.is_paused {
+            record_runtime_control_telemetry(&app, &run, "Resume rejected because run is not paused.");
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_run_not_paused",
+                "Run is already active; resume is only available for paused runs.",
+            ));
+        }
+        queue
+            .resume_active_run_and_take_pending(run.run_id)
+            .map_err(|error| error.to_string())?
+    };
+
+    let resumed = match persist_set_runtime_run_paused_state(&db_path.0, run.run_id, false) {
+        Ok(resumed) => resumed,
+        Err(error) => {
+            if let Ok(mut queue) = state.lock() {
+                let _ = queue.set_active_run_paused(run.run_id, true);
+            }
+            return Err(error);
+        }
+    };
+    emit_runtime_stage_changed_event_for_run(&app, resumed.run_id);
+    record_runtime_control_telemetry(&app, &resumed, "Run resumed by user request.");
+
+    if let Some(pending_terminal) = pending_terminal {
+        let resumed_run = persisted_run_to_runtime_issue_run(resumed.clone());
+        finalize_run(
+            &app,
+            resumed_run,
+            pending_terminal.workspace_root,
+            pending_terminal.terminal_status,
+            pending_terminal.reason_code,
+            pending_terminal.fix_hint,
+        );
+    }
+
+    Ok(RuntimeRunControlOutcome::acknowledged(resumed.run_id, Some(false)))
+}
+
+#[tauri::command]
+pub async fn runtime_abort_issue_run(
+    app: AppHandle,
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeAbortIssueRunRequest,
+) -> Result<RuntimeRunControlOutcome, String> {
+    let (repository_key, _) = match normalize_runtime_control_identity(
+        request.repository_full_name.as_str(),
+        request.issue_number,
+        "Select a valid repository issue before aborting a run.",
+    ) {
+        Ok(identity) => identity,
+        Err(outcome) => return Ok(outcome),
+    };
+    let db_path = app.state::<DbPath>();
+    let run = match load_runtime_control_run(
+        &db_path.0,
+        repository_key.as_str(),
+        request.issue_number,
+        "No active runtime run was found for the selected issue.",
+    ) {
+        Ok(run) => run,
+        Err(outcome) => return Ok(outcome),
+    };
+    if run.stage == RuntimeRunStage::Queued {
+        record_runtime_control_telemetry(&app, &run, "Abort rejected because run is queued.");
+        return Ok(RuntimeRunControlOutcome::rejected(
+            Some(run.run_id),
+            "runtime_abort_not_active",
+            "Abort is only available for active or paused runs.",
+        ));
+    }
+
+    let child = {
+        let mut queue = state.lock()?;
+        if queue.mark_active_run_abort_requested(run.run_id).is_err() {
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_abort_not_active",
+                "Abort is only available for active or paused runs.",
+            ));
+        }
+        queue.take_active_run_child(run.run_id)
+    };
+    if let Some(child) = child {
+        let _ = child.kill();
+    }
+
+    let user_reason = request
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let fix_hint = user_reason
+        .map(|reason| format!("Issue run was aborted by user request: {reason}"))
+        .unwrap_or_else(|| "Issue run was aborted by user request.".to_string());
+    record_runtime_control_telemetry(
+        &app,
+        &run,
+        "Abort request acknowledged. Finalizing run as cancelled.",
+    );
+    finalize_run_with_control_gate(
+        &app,
+        persisted_run_to_runtime_issue_run(run.clone()),
+        None,
+        RuntimeTerminalStatus::Cancelled,
+        Some("runtime_user_abort".to_string()),
+        Some(fix_hint),
+    );
+
+    Ok(RuntimeRunControlOutcome::acknowledged(run.run_id, Some(false)))
+}
+
+#[tauri::command]
+pub async fn runtime_steer_issue_run(
+    app: AppHandle,
+    state: State<'_, RuntimeBoundarySharedState>,
+    request: RuntimeSteerIssueRunRequest,
+) -> Result<RuntimeRunControlOutcome, String> {
+    let (repository_key, _) = match normalize_runtime_control_identity(
+        request.repository_full_name.as_str(),
+        request.issue_number,
+        "Select a valid repository issue before sending steering instructions.",
+    ) {
+        Ok(identity) => identity,
+        Err(outcome) => return Ok(outcome),
+    };
+    let instruction = request.instruction.trim();
+    if instruction.is_empty() {
+        return Ok(RuntimeRunControlOutcome::rejected(
+            None,
+            "runtime_steer_empty_instruction",
+            "Provide a steering instruction before sending.",
+        ));
+    }
+
+    let db_path = app.state::<DbPath>();
+    let run = match load_runtime_control_run(
+        &db_path.0,
+        repository_key.as_str(),
+        request.issue_number,
+        "No active runtime run was found for the selected issue.",
+    ) {
+        Ok(run) => run,
+        Err(outcome) => return Ok(outcome),
+    };
+    if run.stage == RuntimeRunStage::Queued {
+        record_runtime_control_telemetry(&app, &run, "Steering rejected because run is queued.");
+        return Ok(RuntimeRunControlOutcome::rejected(
+            Some(run.run_id),
+            "runtime_steer_not_active",
+            "Steering is only available for active runs.",
+        ));
+    }
+
+    {
+        let mut queue = state.lock()?;
+        let Some(is_paused) = queue.active_run_is_paused(run.run_id) else {
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_steer_not_active",
+                "Steering is only available for active runs.",
+            ));
+        };
+        if is_paused || run.is_paused {
+            record_runtime_control_telemetry(
+                &app,
+                &run,
+                "Steering rejected because run is paused.",
+            );
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_steer_paused",
+                "Resume the paused run before sending steering instructions.",
+            ));
+        }
+
+        if queue
+            .write_active_run_child(run.run_id, format!("{instruction}\n").as_bytes())
+            .is_err()
+        {
+            record_runtime_control_telemetry(
+                &app,
+                &run,
+                "Steering delivery failed for active run.",
+            );
+            return Ok(RuntimeRunControlOutcome::rejected(
+                Some(run.run_id),
+                "runtime_steer_delivery_failed",
+                "Steering could not be delivered to the active worker process.",
+            ));
+        }
+    }
+
+    record_runtime_control_telemetry(&app, &run, "Steering instruction acknowledged.");
+    Ok(RuntimeRunControlOutcome::acknowledged(run.run_id, Some(false)))
 }
 
 #[cfg(test)]
