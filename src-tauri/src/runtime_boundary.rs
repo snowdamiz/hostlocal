@@ -2675,6 +2675,82 @@ mod tests {
     }
 
     #[test]
+    fn runtime_boundary_runtime_run_telemetry_payload_replay_is_newest_first() {
+        let conn = runtime_schema_test_connection();
+        let run = build_run("owner/repo", 4015, "Telemetry replay");
+        let persisted = insert_runtime_run(&conn, &run).expect("persist runtime run");
+
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "queued",
+            "Issue run queued for execution.",
+            true,
+        )
+        .expect("insert queued telemetry milestone");
+        insert_runtime_run_event(
+            &conn,
+            persisted.run_id,
+            "milestone",
+            "preparing",
+            "Preparing local workspace for issue run.",
+            true,
+        )
+        .expect("insert preparing telemetry milestone");
+
+        let payloads = runtime_run_telemetry_payloads_newest_first(&conn, persisted.run_id)
+            .expect("load runtime telemetry payload replay");
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].sequence, 2);
+        assert_eq!(payloads[1].sequence, 1);
+        assert_eq!(payloads[0].kind, "milestone");
+        assert_eq!(payloads[0].stage, "preparing");
+        assert_eq!(payloads[0].repository_key, "owner/repo");
+    }
+
+    #[test]
+    fn runtime_boundary_milestone_templates_cover_lifecycle_checkpoints() {
+        let checkpoints = [
+            (
+                RuntimeTelemetryMilestone::Queue,
+                "Issue run queued for execution.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Start,
+                "Run started from repository queue.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Preparing,
+                "Preparing local workspace for issue run.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Coding,
+                "Coding milestone started in worker runtime.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Validating,
+                "Validation milestone started for runtime outputs.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Publishing,
+                "Publishing milestone started for runtime outputs.",
+            ),
+            (
+                RuntimeTelemetryMilestone::Finalization,
+                "Run finalized with terminal status: success.",
+            ),
+        ];
+
+        for (milestone, expected_message) in checkpoints {
+            let detail = runtime_milestone_detail(milestone, Some("success"));
+            assert_eq!(detail.kind, "milestone");
+            assert_eq!(detail.message, expected_message);
+            assert!(detail.include_in_summary);
+        }
+    }
+
+    #[test]
     fn runtime_boundary_terminal_history_retains_newest_twenty_per_issue() {
         let conn = runtime_schema_test_connection();
         let active_run = build_run("owner/repo", 4013, "Still active");
