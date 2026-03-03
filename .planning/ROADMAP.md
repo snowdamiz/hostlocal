@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Policy-Gated Issue Intake** - Start runs from board movement only for in-scope issues. (completed 2026-03-02)
 - [x] **Phase 3: Local Worker Runtime Boundary** - Run each task locally in isolated ephemeral workspace with command/path guardrails. (completed 2026-03-03)
 - [x] **Phase 4: Deterministic Run State Engine** - Make run stages explicit and crash-recoverable. (completed 2026-03-03)
-- [ ] **Phase 5: Live Telemetry and Safe Summaries** - Stream activity in-app and expose post-run evidence without secret leakage.
+- [x] **Phase 5: Live Telemetry and Safe Summaries** - Stream activity in-app and expose post-run evidence without secret leakage. (completed 2026-03-03)
 - [ ] **Phase 6: In-Run User Control** - Let users pause, resume, abort, and steer active runs.
 - [ ] **Phase 7: Validation Gate Before Publish** - Require explicit code and visual validation outcomes before PR readiness.
 - [ ] **Phase 8: Automated Draft PR Publication** - Create traceable draft PRs directly from successful runs.
@@ -104,7 +104,7 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md - Create secure backend telemetry redaction, persistence, and lifecycle emission foundation. (completed 2026-03-03)
 - [x] 05-02-PLAN.md - Extend runtime command/event contracts and UI state for live telemetry feed hydration. (completed 2026-03-03)
-- [ ] 05-03-PLAN.md - Render telemetry feed and final summary surfaces in issue details panel.
+- [x] 05-03-PLAN.md - Render telemetry feed and final summary surfaces in issue details panel. (completed 2026-03-03)
 
 ### Phase 6: In-Run User Control
 **Goal**: Users can intervene in active runs with pause, resume, abort, and steering actions.
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 (with
 | 02.1. Production Standards Refactor (INSERTED) | 6/6 | Complete    | 2026-03-03 |
 | 3. Local Worker Runtime Boundary | 3/3 | Complete | 2026-03-03 |
 | 4. Deterministic Run State Engine | 3/3 | Complete | 2026-03-03 |
-| 5. Live Telemetry and Safe Summaries | 2/3 | In Progress | - |
+| 5. Live Telemetry and Safe Summaries | 3/3 | Complete | 2026-03-03 |
 | 6. In-Run User Control | 0/TBD | Not started | - |
 | 7. Validation Gate Before Publish | 0/TBD | Not started | - |
 | 8. Automated Draft PR Publication | 0/TBD | Not started | - |
