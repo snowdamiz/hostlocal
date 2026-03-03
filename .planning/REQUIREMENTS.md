@@ -18,9 +18,9 @@ Requirements for the local-only issue-to-PR workflow. Each maps to roadmap phase
 
 ### Local Runtime
 
-- [ ] **RUN-01**: User run executes on the local machine through a Rust/Tauri sidecar path (no remote workers).
+- [x] **RUN-01**: User run executes on the local machine through a Rust/Tauri sidecar path (no remote workers).
 - [x] **RUN-02**: User run uses an isolated ephemeral workspace and branch for that issue.
-- [ ] **RUN-03**: Run workspace is cleaned up automatically after completion or cancellation.
+- [x] **RUN-03**: Run workspace is cleaned up automatically after completion or cancellation.
 
 ### Orchestration
 
@@ -89,9 +89,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STYLE-01 | Phase 1 | Complete |
 | INTK-01 | Phase 2 | Complete |
 | INTK-02 | Phase 2 | Complete |
-| RUN-01 | Phase 3 | Pending |
+| RUN-01 | Phase 3 | Complete |
 | RUN-02 | Phase 3 | Complete |
-| RUN-03 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Complete |
 | ORCH-01 | Phase 4 | Pending |
 | ORCH-02 | Phase 4 | Pending |
 | CTRL-01 | Phase 6 | Pending |
