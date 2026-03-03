@@ -42,6 +42,40 @@ export interface GithubIssueIntakeOutcome {
   fixHint: string | null;
 }
 
+export interface RuntimeEnqueueIssueRunRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+  issueTitle: string;
+}
+
+export interface RuntimeDequeueIssueRunRequest {
+  repositoryFullName: string;
+  issueNumber: number;
+}
+
+export type RuntimeEnqueueIssueRunStatus =
+  | "started"
+  | "queued"
+  | "blocked"
+  | "startup_failed"
+  | "not_found";
+
+export type RuntimeDequeueIssueRunStatus = "removed" | "not_found";
+
+export interface RuntimeEnqueueIssueRunOutcome {
+  status: RuntimeEnqueueIssueRunStatus;
+  queuePosition: number | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+}
+
+export interface RuntimeDequeueIssueRunOutcome {
+  status: RuntimeDequeueIssueRunStatus;
+  queuePosition: number | null;
+  reasonCode: string | null;
+  fixHint: string | null;
+}
+
 export interface GithubAuthStatus {
   connected: boolean;
   user: GithubUser | null;
@@ -131,6 +165,18 @@ export function githubRevertIssueIntake(
   request: GithubIssueIntakeRequest,
 ): Promise<GithubIssueIntakeOutcome> {
   return invoke<GithubIssueIntakeOutcome>("github_revert_issue_intake", { request });
+}
+
+export function runtimeEnqueueIssueRun(
+  request: RuntimeEnqueueIssueRunRequest,
+): Promise<RuntimeEnqueueIssueRunOutcome> {
+  return invoke<RuntimeEnqueueIssueRunOutcome>("runtime_enqueue_issue_run", { request });
+}
+
+export function runtimeDequeueIssueRun(
+  request: RuntimeDequeueIssueRunRequest,
+): Promise<RuntimeDequeueIssueRunOutcome> {
+  return invoke<RuntimeDequeueIssueRunOutcome>("runtime_dequeue_issue_run", { request });
 }
 
 export function githubAuthStart(): Promise<GithubDeviceAuthStart> {
