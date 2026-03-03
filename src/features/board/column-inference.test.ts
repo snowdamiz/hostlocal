@@ -109,4 +109,24 @@ describe("inferDefaultColumn", () => {
       ).toBe(scenario.expected);
     }
   });
+
+  it("keeps paused non-terminal runs in inProgress even when stage is unknown", () => {
+    expect(
+      inferDefaultColumn(createItem({ state: "closed" }), {
+        stage: "paused-runtime",
+        terminalStatus: null,
+        isPaused: true,
+      } as any),
+    ).toBe("inProgress");
+  });
+
+  it("keeps terminal precedence over paused metadata", () => {
+    expect(
+      inferDefaultColumn(createItem({ state: "closed" }), {
+        stage: "paused-runtime",
+        terminalStatus: "failed",
+        isPaused: true,
+      } as any),
+    ).toBe("todo");
+  });
 });
