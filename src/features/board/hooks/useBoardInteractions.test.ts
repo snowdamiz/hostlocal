@@ -751,4 +751,66 @@ describe("runtime control helpers", () => {
       }),
     );
   });
+
+  it("preserves rejection reasonCode and fixHint semantics for control toast surfaces", async () => {
+    const runtimePauseIssueRun = vi.fn().mockResolvedValue(
+      createRuntimeControlOutcome({
+        acknowledged: false,
+        runId: 101,
+        isPaused: false,
+        reasonCode: "runtime_pause_not_active",
+        fixHint: "Only active runs can be paused.",
+      }),
+    );
+    const runtimeResumeIssueRun = vi.fn();
+    const runtimeAbortIssueRun = vi.fn();
+    const runtimeSteerIssueRun = vi.fn();
+    const pushRuntimeControlToast = vi.fn();
+    const hydrateRuntimeSnapshot = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeHistoryForIssue = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeTelemetryForIssue = vi.fn().mockResolvedValue(undefined);
+    const hydrateRuntimeSummaryForIssue = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await executeRuntimeControlAction(
+      {
+        action: "pause",
+        repositoryFullName: "Owner/Repo",
+        issueNumber: 42,
+        runtime: createRuntimeControlTarget({
+          stage: "queued",
+          queuePosition: 1,
+        }),
+        pendingAction: null,
+      },
+      {
+        runtimePauseIssueRun,
+        runtimeResumeIssueRun,
+        runtimeAbortIssueRun,
+        runtimeSteerIssueRun,
+        pushRuntimeControlToast,
+        hydrateRuntimeSnapshot,
+        hydrateRuntimeHistoryForIssue,
+        hydrateRuntimeTelemetryForIssue,
+        hydrateRuntimeSummaryForIssue,
+      },
+    );
+
+    expect(outcome).toEqual(
+      createRuntimeControlOutcome({
+        acknowledged: false,
+        runId: 101,
+        isPaused: false,
+        reasonCode: "runtime_pause_not_active",
+        fixHint: "Only active runs can be paused.",
+      }),
+    );
+    expect(pushRuntimeControlToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "pause",
+        status: "rejected",
+        reasonCode: "runtime_pause_not_active",
+        fixHint: "Only active runs can be paused.",
+      }),
+    );
+  });
 });

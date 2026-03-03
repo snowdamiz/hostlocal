@@ -21,6 +21,19 @@ describe("INTAKE_POLICY_REASON_MAP", () => {
       "runtime_recovery_process_lost",
       "queued_run_not_found",
       "runtime_queue_removal_failed",
+      "invalid_runtime_request",
+      "runtime_control_lookup_failed",
+      "runtime_run_not_found",
+      "runtime_pause_not_active",
+      "runtime_resume_not_active",
+      "runtime_run_not_paused",
+      "runtime_abort_not_active",
+      "runtime_user_abort",
+      "runtime_steer_empty_instruction",
+      "runtime_steer_not_active",
+      "runtime_steer_paused",
+      "runtime_steer_delivery_failed",
+      "runtime_control_command_failed",
     ]);
   });
 });
@@ -59,6 +72,13 @@ describe("resolveIntakePolicyReason", () => {
     expect(resolved.reasonCode).toBe("runtime_recovery_process_lost");
     expect(resolved.violatedRule).toMatch(/recovery|restart|process/i);
     expect(resolved.fixHint).toMatch(/retry|requeue|in progress|todo/i);
+  });
+
+  it("resolves runtime abort cancellation metadata with actionable user-control messaging", () => {
+    const resolved = resolveIntakePolicyReason("runtime_user_abort");
+    expect(resolved.reasonCode).toBe("runtime_user_abort");
+    expect(resolved.violatedRule).toMatch(/aborted|cancelled|user/i);
+    expect(resolved.fixHint).toMatch(/resume|retry|in progress|todo|queue/i);
   });
 
   it("falls back to safe generic messaging for unknown reason codes", () => {
