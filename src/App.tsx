@@ -3,6 +3,7 @@ import { Match, Switch, createSignal, onMount } from "solid-js";
 import { MainLayout } from "./components/MainLayout";
 import { SetupWizard } from "./components/SetupWizard";
 import { IntakeToastViewport } from "./components/IntakeToastViewport";
+import { RuntimeControlToastViewport } from "./components/RuntimeControlToastViewport";
 import { WindowControls } from "./components/WindowControls";
 import { getDevelopmentFolder } from "./lib/commands";
 
@@ -29,6 +30,7 @@ function App() {
       <div class="drag-region" data-tauri-drag-region />
       <WindowControls />
       <IntakeToastViewport />
+      <RuntimeControlToastViewport />
       <Switch>
         <Match when={setupStatus() === "loading"}>
           <section class="setup-shell">
