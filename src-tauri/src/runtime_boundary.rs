@@ -399,6 +399,38 @@ struct PreparedWorkspace {
     repository_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeRunStage {
+    Queued,
+    Preparing,
+    Coding,
+    Validating,
+    Publishing,
+}
+
+impl RuntimeRunStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            RuntimeRunStage::Queued => "queued",
+            RuntimeRunStage::Preparing => "preparing",
+            RuntimeRunStage::Coding => "coding",
+            RuntimeRunStage::Validating => "validating",
+            RuntimeRunStage::Publishing => "publishing",
+        }
+    }
+
+    fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "preparing" => Some(Self::Preparing),
+            "coding" => Some(Self::Coding),
+            "validating" => Some(Self::Validating),
+            "publishing" => Some(Self::Publishing),
+            _ => None,
+        }
+    }
+}
+
 fn runtime_prepare_failed_outcome() -> RuntimeQueueOutcome {
     RuntimeQueueOutcome::startup_failed(
         "runtime_workspace_prepare_failed",
@@ -454,7 +486,7 @@ fn prepare_workspace_for_run(run: &RuntimeIssueRun) -> Result<PreparedWorkspace,
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeTerminalStatus {
     Success,
     Failed,
@@ -471,6 +503,46 @@ impl RuntimeTerminalStatus {
             RuntimeTerminalStatus::GuardrailBlocked => "guardrail_blocked",
         }
     }
+
+    fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "success" => Some(Self::Success),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
+            "guardrail_blocked" => Some(Self::GuardrailBlocked),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimePersistedRun {
+    run_id: i64,
+    repository_key: String,
+    repository_full_name: String,
+    issue_number: i64,
+    issue_title: String,
+    issue_branch_name: String,
+    queue_order: i64,
+    stage: RuntimeRunStage,
+    terminal_status: Option<RuntimeTerminalStatus>,
+    reason_code: Option<String>,
+    fix_hint: Option<String>,
+    created_at: String,
+    updated_at: String,
+    terminal_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimePersistedTransition {
+    transition_id: i64,
+    run_id: i64,
+    sequence: i64,
+    stage: RuntimeRunStage,
+    terminal_status: Option<RuntimeTerminalStatus>,
+    reason_code: Option<String>,
+    fix_hint: Option<String>,
+    created_at: String,
 }
 
 #[derive(Debug, Serialize)]
