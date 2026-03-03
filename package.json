@@ -7,6 +7,10 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
+    "test": "pnpm exec vitest run",
+    "lint": "pnpm run lint:eslint && pnpm run lint:colors",
+    "lint:eslint": "pnpm exec eslint src --max-warnings=0",
+    "lint:colors": "bash -lc 'if rg -n \"#([0-9a-fA-F]{3,8})\" src --glob \"*.ts\" --glob \"*.tsx\" --glob \"*.css\" --glob \"!src/styles/tokens.css\"; then echo \"Hardcoded color literal detected\"; exit 1; else echo \"Hardcoded color check passed\"; fi'",
     "serve": "vite preview",
     "tauri": "tauri"
   },
@@ -20,6 +24,8 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/cli": "^2",
+    "@typescript-eslint/parser": "^8.56.1",
+    "eslint": "^10.0.2",
     "jsdom": "^28.1.0",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.6.2",
