@@ -76,7 +76,20 @@ _Note: TDD tasks include RED test commits and GREEN implementation commits._
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 3 - Blocking] `gsd-tools` state advancement/session commands could not parse legacy STATE format**
+- **Found during:** Post-task metadata/state update step
+- **Issue:** `state advance-plan`, `state update-progress`, and `state record-session` reported parse failures (`Current Plan or Total Plans` / `No session fields found`).
+- **Fix:** Applied manual `STATE.md` Current Position + Session Continuity updates and ensured `ROADMAP.md` plan-progress row reflected `1/3 In Progress`.
+- **Files modified:** `.planning/STATE.md`, `.planning/ROADMAP.md`
+- **Verification:** `STATE.md` now reflects plan `1 of 3` with updated session handoff; `ROADMAP.md` phase-4 progress row now shows `1/3 In Progress`.
+- **Committed in:** `dd9faa7`
+
+---
+
+**Total deviations:** 1 auto-fixed (1 blocking)
+**Impact on plan:** Metadata update path changed, but runtime persistence implementation scope and verification outcomes were unchanged.
 
 ## Issues Encountered
 
