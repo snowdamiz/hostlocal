@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GithubIssueIntakeOutcome, GithubRepositoryItem, RuntimeEnqueueIssueRunOutcome } from "../../../lib/commands";
-import { startAgentRunForIssue } from "./useBoardInteractions";
+import type {
+  GithubIssueIntakeOutcome,
+  GithubRepositoryItem,
+  RuntimeDequeueIssueRunOutcome,
+  RuntimeEnqueueIssueRunOutcome,
+} from "../../../lib/commands";
+import { revertIssueIntakeWithRuntimeDequeue, startAgentRunForIssue } from "./useBoardInteractions";
 
 const createIssue = (overrides: Partial<GithubRepositoryItem> = {}): GithubRepositoryItem => ({
   id: 1,
@@ -23,6 +28,17 @@ const createQueueOutcome = (
   reasonCode: string | null,
   fixHint: string | null,
 ): RuntimeEnqueueIssueRunOutcome => ({
+  status,
+  queuePosition: null,
+  reasonCode,
+  fixHint,
+});
+
+const createDequeueOutcome = (
+  status: RuntimeDequeueIssueRunOutcome["status"],
+  reasonCode: string | null,
+  fixHint: string | null,
+): RuntimeDequeueIssueRunOutcome => ({
   status,
   queuePosition: null,
   reasonCode,
@@ -120,6 +136,78 @@ describe("startAgentRunForIssue", () => {
       accepted: false,
       reasonCode: "runtime_startup_failed",
       fixHint: "Runtime startup failed before local worker execution could begin.",
+    });
+  });
+});
+
+describe("revertIssueIntakeWithRuntimeDequeue", () => {
+  it("returns explicit rejection and skips intake revert when queued run cannot be removed", async () => {
+    const runtimeDequeueIssueRun = vi.fn().mockResolvedValue(
+      createDequeueOutcome(
+        "not_found",
+        "queued_run_not_found",
+        "Issue run was not queued for this repository.",
+      ),
+    );
+    const githubRevertIssueIntake = vi.fn();
+
+    const outcome = await revertIssueIntakeWithRuntimeDequeue(
+      {
+        repositoryFullName: "Owner/Repo",
+        item: createIssue(),
+        agentLabel: "hostlocal",
+      },
+      {
+        runtimeDequeueIssueRun,
+        githubRevertIssueIntake,
+      },
+    );
+
+    expect(outcome).toEqual({
+      accepted: false,
+      reasonCode: "queued_run_not_found",
+      fixHint: "Issue run was not queued for this repository.",
+    });
+    expect(githubRevertIssueIntake).not.toHaveBeenCalled();
+  });
+
+  it("calls intake revert after successful queued-run removal", async () => {
+    const runtimeDequeueIssueRun = vi.fn().mockResolvedValue(
+      createDequeueOutcome("removed", null, null),
+    );
+    const githubRevertIssueIntake = vi.fn().mockResolvedValue({
+      accepted: true,
+      reasonCode: null,
+      fixHint: null,
+    } satisfies GithubIssueIntakeOutcome);
+
+    const outcome = await revertIssueIntakeWithRuntimeDequeue(
+      {
+        repositoryFullName: "Owner/Repo",
+        item: createIssue({
+          number: 99,
+        }),
+        agentLabel: "hostlocal",
+      },
+      {
+        runtimeDequeueIssueRun,
+        githubRevertIssueIntake,
+      },
+    );
+
+    expect(runtimeDequeueIssueRun).toHaveBeenCalledWith({
+      repositoryFullName: "Owner/Repo",
+      issueNumber: 99,
+    });
+    expect(githubRevertIssueIntake).toHaveBeenCalledWith({
+      repositoryFullName: "Owner/Repo",
+      issueNumber: 99,
+      agentLabel: "hostlocal",
+    });
+    expect(outcome).toEqual({
+      accepted: true,
+      reasonCode: null,
+      fixHint: null,
     });
   });
 });

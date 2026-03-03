@@ -5,7 +5,7 @@ import {
 } from "./policy-reasons";
 
 describe("INTAKE_POLICY_REASON_MAP", () => {
-  it("contains all required phase-two policy rejection reason codes", () => {
+  it("contains policy and runtime boundary rejection reason codes", () => {
     expect(Object.keys(INTAKE_POLICY_REASON_MAP)).toEqual([
       "empty_body",
       "issue_closed",
@@ -14,6 +14,12 @@ describe("INTAKE_POLICY_REASON_MAP", () => {
       "label_persist_failed",
       "label_persist_rate_limited",
       "duplicate_intake_pending",
+      "runtime_guardrail_workspace_boundary_path",
+      "runtime_guardrail_command_scope_command",
+      "runtime_startup_failed",
+      "runtime_workspace_prepare_failed",
+      "queued_run_not_found",
+      "runtime_queue_removal_failed",
     ]);
   });
 });
@@ -31,6 +37,20 @@ describe("resolveIntakePolicyReason", () => {
     const resolved = resolveIntakePolicyReason("label_persist_failed", "Retry after labels are synchronized.");
     expect(resolved.reasonCode).toBe("label_persist_failed");
     expect(resolved.fixHint).toBe("Retry after labels are synchronized.");
+  });
+
+  it("resolves runtime guardrail reason codes with violated-rule and fix-hint copy", () => {
+    const resolved = resolveIntakePolicyReason("runtime_guardrail_command_scope_command");
+    expect(resolved.reasonCode).toBe("runtime_guardrail_command_scope_command");
+    expect(resolved.violatedRule).toMatch(/blocked|command/i);
+    expect(resolved.fixHint).toMatch(/approved|retry|scope/i);
+  });
+
+  it("resolves queued-run removal failures with explicit runtime queue guidance", () => {
+    const resolved = resolveIntakePolicyReason("queued_run_not_found");
+    expect(resolved.reasonCode).toBe("queued_run_not_found");
+    expect(resolved.violatedRule).toMatch(/queued|queue/i);
+    expect(resolved.fixHint).toMatch(/queued|repository|retry/i);
   });
 
   it("falls back to safe generic messaging for unknown reason codes", () => {
